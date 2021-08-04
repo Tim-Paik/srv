@@ -2,21 +2,65 @@
 extern crate clap;
 #[macro_use]
 extern crate rocket;
+/*
+#[macro_use]
+extern crate rocket_dyn_templates;
+ */
 
 use colored::*;
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::{config::TlsConfig, fs::NamedFile};
+use rocket_dyn_templates::Template;
 use std::net::IpAddr;
 use std::path::Path;
 use std::str::FromStr;
 
 #[get("/<path..>")]
-async fn index(path: std::path::PathBuf) -> Option<NamedFile> {
+async fn file_server(path: std::path::PathBuf) -> Option<NamedFile> {
+    let mut path = Path::new(&std::env::var("ROOT").unwrap()).join(path);
+    if path.is_dir() {
+        path.push("index.html")
+    }
     NamedFile::open(path).await.ok()
+}
+
+#[derive(rocket::serde::Serialize)]
+#[serde(crate = "rocket::serde")]
+struct IndexContext<'r> {
+    title: &'r String,
 }
 
 #[catch(404)]
 fn not_found() {}
+
+struct Index {}
+
+#[rocket::async_trait]
+impl Fairing for Index {
+    fn info(&self) -> Info {
+        Info {
+            name: "Index",
+            kind: Kind::Response,
+        }
+    }
+    async fn on_response<'r>(
+        &self,
+        request: &'r rocket::Request<'_>,
+        response: &mut rocket::Response<'r>,
+    ) {
+        if response.status().code != 404
+            || !Path::new(
+                &(std::env::var("ROOT").unwrap().to_string() + request.uri().path().as_str()),
+            )
+            .is_dir()
+        {
+            return;
+        }
+        response.set_status(rocket::http::Status::Ok);
+        let str = "Hello,World!";
+        response.set_sized_body(str.len(), std::io::Cursor::new(str));
+    }
+}
 
 struct Logger {}
 
@@ -32,8 +76,13 @@ impl Fairing for Logger {
         println!(
             "{}",
             format!(
-                "Serving {} on {}:{}",
+                "Serving {} on {}{}:{}",
                 std::env::var("ROOT").unwrap_or("[Get Path Error]".to_string()),
+                if rocket.config().tls_enabled() {
+                    "https://"
+                } else {
+                    "http://"
+                },
                 rocket.config().address.to_string(),
                 rocket.config().port.to_string()
             )
@@ -45,7 +94,7 @@ impl Fairing for Logger {
         request: &'r rocket::Request<'_>,
         response: &mut rocket::Response<'r>,
     ) {
-        print!(
+        println!(
             "[{}] {} | {} | {} {}",
             chrono::Local::now()
                 .format("%Y/%m/%d %H:%M:%S")
@@ -64,7 +113,15 @@ impl Fairing for Logger {
             request.method().to_string().bright_blue(),
             request.uri().to_string().bright_blue()
         );
-        println!("");
+    }
+}
+
+fn display_path(path: &std::path::Path) -> String {
+    let root = Path::canonicalize(path).unwrap().display().to_string();
+    if root.starts_with("\\\\?\\") {
+        root[4..root.len()].to_string()
+    } else {
+        root.to_string()
     }
 }
 
@@ -144,17 +201,10 @@ async fn main() {
     )
     .get_matches();
 
-    std::env::set_var("ROOT", {
-        let root = Path::canonicalize(Path::new(matches.value_of("ROOT").unwrap()))
-            .unwrap()
-            .display()
-            .to_string();
-        if root.starts_with("\\\\?\\") {
-            root[4..root.len()].to_string()
-        } else {
-            root.to_string()
-        }
-    });
+    std::env::set_var(
+        "ROOT",
+        display_path(Path::new(matches.value_of("ROOT").unwrap())),
+    );
 
     if matches.is_present("nocolor") {
         colored::control::set_override(false);
@@ -192,15 +242,16 @@ async fn main() {
     };
 
     if matches.is_present("open") {
-        let url = if enable_tls {
-            "https://".to_string()
-        } else {
-            "http://".to_string()
-        };
-        let url = url
-            + &matches.value_of("address").unwrap().to_string()
-            + ":"
-            + &matches.value_of("port").unwrap().to_string();
+        let url = format!(
+            "{}{}:{}",
+            if enable_tls {
+                "https://".to_string()
+            } else {
+                "http://".to_string()
+            },
+            matches.value_of("address").unwrap().to_string(),
+            matches.value_of("port").unwrap().to_string()
+        );
         if cfg!(target_os = "windows") {
             std::process::Command::new("explorer").arg(url).spawn().ok();
         } else if cfg!(target_os = "macos") {
@@ -210,11 +261,18 @@ async fn main() {
         }
     }
 
-    rocket::custom(figment)
+    match rocket::custom(figment)
+        .attach(Index {})
         .attach(Logger {})
-        .mount("/", routes![index])
+        .attach(Template::fairing())
+        .mount("/", routes![file_server])
         .register("/", catchers![not_found])
         .launch()
         .await
-        .unwrap();
+    {
+        Ok(_) => {}
+        Err(e) => {
+            println!("{}", format!("[Error] {}", e.to_string()).bright_red());
+        }
+    };
 }
