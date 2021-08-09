@@ -2,15 +2,14 @@
 extern crate clap;
 #[macro_use]
 extern crate rocket;
-/*
-#[macro_use]
-extern crate rocket_dyn_templates;
- */
 
 use colored::*;
 use rocket::fairing::{Fairing, Info, Kind};
+use rocket::http::Status;
+use rocket::response::status;
 use rocket::{config::TlsConfig, fs::NamedFile};
 use rocket_dyn_templates::Template;
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::Path;
 use std::str::FromStr;
@@ -31,35 +30,20 @@ struct IndexContext<'r> {
 }
 
 #[catch(404)]
-fn not_found() {}
-
-struct Index {}
-
-#[rocket::async_trait]
-impl Fairing for Index {
-    fn info(&self) -> Info {
-        Info {
-            name: "Index",
-            kind: Kind::Response,
-        }
+fn not_found(request: &rocket::Request) -> status::Custom<Template> {
+    let path = request.uri().path().to_string();
+    let path = path[1..path.len()].to_string();
+    // Remove the / in front of the path, if the path with / is spliced, the previous path will be ignored
+    let path = Path::new(&std::env::var("ROOT").unwrap()).join(path);
+    if !path.is_dir() {
+        let context: HashMap<&str, &str> = HashMap::new();
+        return status::Custom(Status::NotFound, Template::render("404", &context));
+        // Need to have file 404.tera as a placeholder
     }
-    async fn on_response<'r>(
-        &self,
-        request: &'r rocket::Request<'_>,
-        response: &mut rocket::Response<'r>,
-    ) {
-        if response.status().code != 404
-            || !Path::new(
-                &(std::env::var("ROOT").unwrap().to_string() + request.uri().path().as_str()),
-            )
-            .is_dir()
-        {
-            return;
-        }
-        response.set_status(rocket::http::Status::Ok);
-        let str = "Hello,World!";
-        response.set_sized_body(str.len(), std::io::Cursor::new(str));
-    }
+    let context = &IndexContext {
+        title: &"title?".to_string(),
+    };
+    status::Custom(Status::Ok, Template::render("index", context))
 }
 
 struct Logger {}
@@ -262,7 +246,6 @@ async fn main() {
     }
 
     match rocket::custom(figment)
-        .attach(Index {})
         .attach(Logger {})
         .attach(Template::fairing())
         .mount("/", routes![file_server])
