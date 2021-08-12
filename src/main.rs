@@ -5,6 +5,7 @@ extern crate rocket;
 
 use colored::*;
 use rocket::fairing::{Fairing, Info, Kind};
+use rocket::response::Redirect;
 use rocket::{config::TlsConfig, fs::NamedFile};
 use rocket_dyn_templates::Template;
 use std::net::IpAddr;
@@ -22,8 +23,26 @@ async fn file_server(path: std::path::PathBuf) -> Option<NamedFile> {
 
 #[derive(rocket::serde::Serialize)]
 #[serde(crate = "rocket::serde")]
+struct Dir {
+    name: String,
+    modified: String,
+}
+
+#[derive(rocket::serde::Serialize)]
+#[serde(crate = "rocket::serde")]
+struct File {
+    name: String,
+    size: u64,
+    modified: String,
+}
+
+#[derive(rocket::serde::Serialize)]
+#[serde(crate = "rocket::serde")]
 struct IndexContext<'r> {
-    title: &'r String,
+    title: &'r str,
+    paths: Vec<&'r str>,
+    dirs: Vec<Dir>,
+    files: Vec<File>,
 }
 
 #[derive(Responder)]
@@ -31,9 +50,11 @@ enum Resp {
     #[response(status = 200)]
     Index(Template),
     #[response(status = 404)]
-    NotFound(String),
+    NotFound(&'static str),
     #[response(status = 200)]
-    File(NamedFile),
+    File(Option<NamedFile>),
+    #[response(status = 302)]
+    Redirect(Redirect),
 }
 
 #[catch(404)]
@@ -48,19 +69,61 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
     if root.join("index.html").is_file()
         && std::env::var("SPA").unwrap_or("false".to_string()) == "true"
     {
-        return Resp::File(
-            NamedFile::open(&root.join("index.html"))
-                .await
-                .ok()
-                .unwrap(),
-        );
+        return Resp::File(NamedFile::open(&root.join("index.html")).await.ok());
+    }
+    // Show dotfiles, std::path::PathBuf does not match the url beginning with the dot
+    if localpath.is_file() && std::env::var("DOTFILES").unwrap_or("false".to_string()) == "true" {
+        return Resp::File(NamedFile::open(localpath).await.ok());
     }
     if !localpath.is_dir() {
-        return Resp::NotFound("".to_string());
-        // Need to have file 404.tera as a placeholder
+        return Resp::NotFound("");
+    }
+    if !request.uri().path().ends_with("/") {
+        println!("ok");
+        return Resp::Redirect(Redirect::to(request.uri().path().to_string() + "/"));
     }
     let context = &IndexContext {
-        title: &"title?".to_string(),
+        title: "title?",
+        paths: vec!["target", "debug"],
+        dirs: vec![
+            Dir {
+                name: ".fingerprint".to_string(),
+                modified: chrono::Local::now().to_string(),
+            },
+            Dir {
+                name: "build".to_string(),
+                modified: chrono::Local::now().to_string(),
+            },
+            Dir {
+                name: "deps".to_string(),
+                modified: chrono::Local::now().to_string(),
+            },
+            Dir {
+                name: "examples".to_string(),
+                modified: chrono::Local::now().to_string(),
+            },
+            Dir {
+                name: "incremental".to_string(),
+                modified: chrono::Local::now().to_string(),
+            },
+        ],
+        files: vec![
+            File {
+                name: ".cargo-lock".to_string(),
+                size: 0,
+                modified: chrono::Local::now().to_string(),
+            },
+            File {
+                name: "web".to_string(),
+                size: 142606336,
+                modified: chrono::Local::now().to_string(),
+            },
+            File {
+                name: "web.d".to_string(),
+                size: 88,
+                modified: chrono::Local::now().naive_local().to_string(),
+            },
+        ],
     };
     Resp::Index(Template::render("index", context))
 }
@@ -140,6 +203,7 @@ async fn main() {
         (@arg nocolor: --nocolor "Disable cli colors")
         (@arg cors: --cors "Enable CORS")
         (@arg spa: --spa "Enable Single-Page Application mode (always serve /index.html when the file is not found)")
+        (@arg dotfiles: --dotfiles "Show dotfiles")
         (@arg open: -o --open "Open the page in the default browser")
         (@arg ROOT: default_value["."] {
             |path| match std::fs::metadata(path) {
@@ -206,10 +270,11 @@ async fn main() {
 
     std::env::set_var(
         "ROOT",
-        display_path(Path::new(matches.value_of("ROOT").unwrap())),
+        display_path(Path::new(matches.value_of("ROOT").unwrap_or("."))),
     );
 
     std::env::set_var("SPA", matches.is_present("spa").to_string());
+    std::env::set_var("DOTFILES", matches.is_present("dotfiles").to_string());
 
     if matches.is_present("nocolor") {
         colored::control::set_override(false);
@@ -218,16 +283,15 @@ async fn main() {
     let figment = rocket::Config::figment()
         .merge((
             "address",
-            IpAddr::from_str(matches.value_of("address").unwrap())
-                .unwrap_or(IpAddr::from([127, 0, 0, 1])),
+            IpAddr::from_str(matches.value_of("address").unwrap_or("127.0.0.1")).unwrap(),
         ))
         .merge((
             "port",
             matches
                 .value_of("port")
-                .unwrap()
+                .unwrap_or("8000")
                 .parse::<u16>()
-                .unwrap_or(8000),
+                .unwrap(),
         ))
         .merge((
             "ident",
@@ -254,8 +318,11 @@ async fn main() {
             } else {
                 "http://".to_string()
             },
-            matches.value_of("address").unwrap().to_string(),
-            matches.value_of("port").unwrap().to_string()
+            matches
+                .value_of("address")
+                .unwrap_or("127.0.0.1")
+                .to_string(),
+            matches.value_of("port").unwrap_or("8000").to_string()
         );
         if cfg!(target_os = "windows") {
             std::process::Command::new("explorer").arg(url).spawn().ok();

@@ -1,20 +1,139 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="renderer" content="webkit" />
-    <meta name="force-rendering" content="webkit" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{{ title }}</title>
-    <style>
-      * {
-        padding: 0;
-        margin: 0;
-      }
-    </style>
-  </head>
-  <body>
-    <header style="padding: 1.5rem 5% 1rem; background-color: #f2f2f2"></header>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="renderer" content="webkit" />
+  <meta name="force-rendering" content="webkit" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title }}</title>
+  <!--[if lt IE 9
+      ]><script src="https://cdn.jsdelivr.net/npm/html5shiv/dist/html5shiv.min.js"></script
+    ><![endif]-->
+  <style>
+    * {
+      padding: 0;
+      margin: 0;
+      border-spacing: 0;
+    }
+
+    a {
+      text-decoration: none;
+      color: #116fce;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 0.4rem 0;
+      white-space: nowrap;
+      font-size: 1rem;
+      border-bottom: 1px dashed #cccccc;
+    }
+  </style>
+</head>
+
+<body>
+  {% set paths_length = paths | length %}
+  <header style="padding: 1.5rem 5% 1rem; background-color: #f2f2f2">
+    <h1 style="font-size: 1.25rem; font-weight: normal">
+      <nav>
+        <span>
+          <a href="/"> / </a>
+        </span>
+        {% for path in paths %}
+        <span>
+          <a href="./{% for i in range(end=paths | length - loop.index) %}../{% endfor %}">{{ path }} /
+          </a>
+        </span>
+        {% endfor %}
+      </nav>
+    </h1>
+  </header>
+  <main>
+    <div id="meta" style="font-size: 0.75rem; padding: 1.05rem 5%">
+      <span style="margin-right: 1rem"><b>{{ dirs | length }}</b> directories</span>
+      <span><b>{{ files | length }}</b> files</span>
+    </div>
+    <div id="listing">
+      <table style="border-top: 1px dashed #cccccc">
+        <thead style="height: 3rem">
+          <tr>
+            <th style="width: 5%"></th>
+            <th style="width: 80%">Name</th>
+            <th style="padding: 0 1.25rem">Size</th>
+            <th class="hideable" style="text-align: right">Modified</th>
+            <th class="hideable" style="width: 5%"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="width: 5%"></td>
+            <td style="width: 80%">
+              <a href="../"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50" width="1.5rem" height="100%"
+                  style="vertical-align: middle">
+                  <path
+                    d="M 25 7.21875 L 23.59375 8.65625 L 13.6875 18.53125 C 12.902344 19.316406 12.902344 20.589844 13.6875 21.375 C 14.472656 22.160156 15.746094 22.160156 16.53125 21.375 L 23 14.875 L 23 40 C 22.988281 40.722656 23.367188 41.390625 23.992188 41.753906 C 24.613281 42.121094 25.386719 42.121094 26.007813 41.753906 C 26.632813 41.390625 27.011719 40.722656 27 40 L 27 14.875 L 33.46875 21.375 C 34.253906 22.160156 35.527344 22.160156 36.3125 21.375 C 37.097656 20.589844 37.097656 19.316406 36.3125 18.53125 L 26.40625 8.65625 Z">
+                  </path>
+                </svg>
+                <span>Go up</span></a>
+            </td>
+            <td data-order="-1" style="padding: 0 1.25rem">-</td>
+            <td class="hideable" style="text-align: right">-</td>
+            <td style="width: 5%"></td>
+          </tr>
+          {% for dir in dirs %}
+          <tr class="dir">
+            <td style="width: 5%"></td>
+            <td style="width: 80%">
+              <a href="./{{ dir.name }}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="1.5rem"
+                  height="100%" style="vertical-align: middle">
+                  <path fill="#FFA000" d="M40,12H22l-4-4H8c-2.2,0-4,1.8-4,4v8h40v-4C44,13.8,42.2,12,40,12z" />
+                  <path fill="#FFCA28"
+                    d="M40,12H8c-2.2,0-4,1.8-4,4v20c0,2.2,1.8,4,4,4h32c2.2,0,4-1.8,4-4V16C44,13.8,42.2,12,40,12z" />
+                </svg>
+                <span>{{ dir.name }}</span></a>
+            </td>
+            <td data-order="-1" style="padding: 0 1.25rem">-</td>
+            <td class="hideable" style="text-align: right">
+              {{ dir.modified }}
+            </td>
+            <td class="hideable" style="width: 5%"></td>
+          </tr>
+          {% endfor %} {% for file in files %}
+          <tr class="file">
+            <td style="width: 5%"></td>
+            <td style="width: 80%">
+              <a href="./{{ file.name }}"><svg fill="#000000" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                  width="1.5rem" height="100%" style="vertical-align: middle">
+                  <path
+                    d="M 6 2 C 4.9057453 2 4 2.9057453 4 4 L 4 20 C 4 21.094255 4.9057453 22 6 22 L 18 22 C 19.094255 22 20 21.094255 20 20 L 20 8 L 14 2 L 6 2 z M 6 4 L 13 4 L 13 9 L 18 9 L 18 20 L 6 20 L 6 4 z" />
+                </svg>
+                <span>{{ file.name }}</span></a>
+            </td>
+            <td data-order="-1" style="padding: 0 1.25rem">
+              {{ file.size | filesizeformat |
+              replace(from="KB", to="KiB") |
+              replace(from="MB", to="MiB") |
+              replace(from="GB", to="GiB") |
+              replace(from="TB", to="TiB") |
+              replace(from="PB", to="PiB") |
+              replace(from="EB", to="EiB") |
+              replace(from="ZB", to="ZiB") |
+              replace(from="YB", to="YiB") }}
+            </td>
+            <td class="hideable" style="text-align: right">
+              {{ file.modified }}
+            </td>
+            <td class="hideable" style="width: 5%"></td>
+          </tr>
+          {% endfor %}
+          <tr></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</body>
+
 </html>
