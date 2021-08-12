@@ -5,18 +5,15 @@ extern crate rocket;
 
 use colored::*;
 use rocket::fairing::{Fairing, Info, Kind};
-use rocket::http::Status;
-use rocket::response::status;
 use rocket::{config::TlsConfig, fs::NamedFile};
 use rocket_dyn_templates::Template;
-use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::Path;
 use std::str::FromStr;
 
 #[get("/<path..>")]
 async fn file_server(path: std::path::PathBuf) -> Option<NamedFile> {
-    let mut path = Path::new(&std::env::var("ROOT").unwrap()).join(path);
+    let mut path = Path::new(&std::env::var("ROOT").unwrap_or(".".to_string())).join(path);
     if path.is_dir() {
         path.push("index.html")
     }
@@ -29,21 +26,43 @@ struct IndexContext<'r> {
     title: &'r String,
 }
 
+#[derive(Responder)]
+enum Resp {
+    #[response(status = 200)]
+    Index(Template),
+    #[response(status = 404)]
+    NotFound(String),
+    #[response(status = 200)]
+    File(NamedFile),
+}
+
 #[catch(404)]
-fn not_found(request: &rocket::Request) -> status::Custom<Template> {
-    let path = request.uri().path().to_string();
-    let path = path[1..path.len()].to_string();
+async fn not_found(request: &rocket::Request<'_>) -> Resp {
+    let root = std::env::var("ROOT").unwrap_or(".".to_string());
+    let root = Path::new(&root);
+    let localpath = request.uri().path().to_string();
+    let localpath = localpath[1..localpath.len()].to_string();
     // Remove the / in front of the path, if the path with / is spliced, the previous path will be ignored
-    let path = Path::new(&std::env::var("ROOT").unwrap()).join(path);
-    if !path.is_dir() {
-        let context: HashMap<&str, &str> = HashMap::new();
-        return status::Custom(Status::NotFound, Template::render("404", &context));
+    let localpath = &root.join(localpath);
+    // Single-Page Application support
+    if root.join("index.html").is_file()
+        && std::env::var("SPA").unwrap_or("false".to_string()) == "true"
+    {
+        return Resp::File(
+            NamedFile::open(&root.join("index.html"))
+                .await
+                .ok()
+                .unwrap(),
+        );
+    }
+    if !localpath.is_dir() {
+        return Resp::NotFound("".to_string());
         // Need to have file 404.tera as a placeholder
     }
     let context = &IndexContext {
         title: &"title?".to_string(),
     };
-    status::Custom(Status::Ok, Template::render("index", context))
+    Resp::Index(Template::render("index", context))
 }
 
 struct Logger {}
@@ -83,12 +102,12 @@ impl Fairing for Logger {
             chrono::Local::now()
                 .format("%Y/%m/%d %H:%M:%S")
                 .to_string()
-                .white(),
+                .bright_blue(),
             request
                 .client_ip()
                 .unwrap_or(IpAddr::from([0, 0, 0, 0]))
                 .to_string()
-                .white(),
+                .bright_blue(),
             if response.status().code < 400 {
                 response.status().code.to_string().bright_green()
             } else {
@@ -190,6 +209,8 @@ async fn main() {
         display_path(Path::new(matches.value_of("ROOT").unwrap())),
     );
 
+    std::env::set_var("SPA", matches.is_present("spa").to_string());
+
     if matches.is_present("nocolor") {
         colored::control::set_override(false);
     }
@@ -210,7 +231,7 @@ async fn main() {
         ))
         .merge((
             "ident",
-            std::env::var("WEB_SERVER_NAME").unwrap_or("timpaik'server".to_string()),
+            std::env::var("WEB_SERVER_NAME").unwrap_or("timpaik'web server".to_string()),
         ))
         .merge(("cli_colors", matches.is_present("color")))
         .merge(("log_level", "off"));
