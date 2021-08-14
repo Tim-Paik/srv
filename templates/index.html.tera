@@ -25,6 +25,7 @@
 
     th,
     td {
+      height: 1.6rem;
       text-align: left;
       padding: 0.4rem 0;
       white-space: nowrap;

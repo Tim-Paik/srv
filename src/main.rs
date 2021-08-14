@@ -59,73 +59,93 @@ enum Resp {
 
 #[catch(404)]
 async fn not_found(request: &rocket::Request<'_>) -> Resp {
+    let path = request.uri().path();
     let root = std::env::var("ROOT").unwrap_or(".".to_string());
     let root = Path::new(&root);
-    let localpath = request.uri().path().to_string();
+    let localpath = path.to_string();
     let localpath = localpath[1..localpath.len()].to_string();
     // Remove the / in front of the path, if the path with / is spliced, the previous path will be ignored
     let localpath = &root.join(localpath);
+    // Show dotfiles, std::path::PathBuf does not match the url beginning with the dot
+    let show_dot_files = std::env::var("DOTFILES").unwrap_or("false".to_string()) == "true";
+    if localpath.is_file() && show_dot_files {
+        return Resp::File(NamedFile::open(localpath).await.ok());
+    }
     // Single-Page Application support
     if root.join("index.html").is_file()
         && std::env::var("SPA").unwrap_or("false".to_string()) == "true"
     {
         return Resp::File(NamedFile::open(&root.join("index.html")).await.ok());
     }
-    // Show dotfiles, std::path::PathBuf does not match the url beginning with the dot
-    if localpath.is_file() && std::env::var("DOTFILES").unwrap_or("false".to_string()) == "true" {
-        return Resp::File(NamedFile::open(localpath).await.ok());
-    }
     if !localpath.is_dir() {
         return Resp::NotFound("");
     }
-    if !request.uri().path().ends_with("/") {
-        println!("ok");
-        return Resp::Redirect(Redirect::to(request.uri().path().to_string() + "/"));
+    if !path.ends_with("/") {
+        return Resp::Redirect(Redirect::to(path.to_string() + "/"));
     }
-    let context = &IndexContext {
-        title: "title?",
-        paths: vec!["target", "debug"],
-        dirs: vec![
-            Dir {
-                name: ".fingerprint".to_string(),
-                modified: chrono::Local::now().to_string(),
-            },
-            Dir {
-                name: "build".to_string(),
-                modified: chrono::Local::now().to_string(),
-            },
-            Dir {
-                name: "deps".to_string(),
-                modified: chrono::Local::now().to_string(),
-            },
-            Dir {
-                name: "examples".to_string(),
-                modified: chrono::Local::now().to_string(),
-            },
-            Dir {
-                name: "incremental".to_string(),
-                modified: chrono::Local::now().to_string(),
-            },
-        ],
-        files: vec![
-            File {
-                name: ".cargo-lock".to_string(),
-                size: 0,
-                modified: chrono::Local::now().to_string(),
-            },
-            File {
-                name: "web".to_string(),
-                size: 142606336,
-                modified: chrono::Local::now().to_string(),
-            },
-            File {
-                name: "web.d".to_string(),
-                size: 88,
-                modified: chrono::Local::now().naive_local().to_string(),
-            },
-        ],
+    let mut context = IndexContext {
+        title: "",
+        paths: vec![],
+        dirs: vec![],
+        files: vec![],
     };
-    Resp::Index(Template::render("index", context))
+    for path in path.split('/') {
+        if path == "" {
+            continue;
+        }
+        context.paths.push(path.as_str());
+    }
+    match std::fs::read_dir(localpath) {
+        Err(e) => println!("{} {}", "Error".bright_red(), e.to_string()),
+        Ok(paths) => {
+            for path in paths {
+                let path = match path {
+                    Ok(a) => a,
+                    Err(e) => {
+                        println!("{} {}", "Error".bright_red(), e.to_string());
+                        continue;
+                    }
+                };
+                let filename = match path.file_name().to_str() {
+                    Some(str) => str.to_string(),
+                    None => {
+                        println!("{} {}", "Error".bright_red(), "Read filename error");
+                        continue;
+                    }
+                };
+                if !show_dot_files && filename.starts_with(".") {
+                    continue;
+                }
+                let metadata = match path.metadata() {
+                    Ok(data) => data,
+                    Err(e) => {
+                        println!("{} {}", "Error".bright_red(), e.to_string());
+                        continue;
+                    }
+                };
+                let modified = match metadata.modified() {
+                    Ok(time) => chrono::DateTime::<chrono::Local>::from(time).to_string(),
+                    Err(e) => {
+                        println!("{} {}", "Error".bright_red(), e.to_string());
+                        continue;
+                    }
+                };
+                if metadata.is_dir() {
+                    context.dirs.push(Dir {
+                        name: filename,
+                        modified: modified,
+                    })
+                } else if metadata.is_file() {
+                    context.files.push(File {
+                        name: filename,
+                        size: metadata.len(),
+                        modified: modified,
+                    })
+                }
+            }
+        }
+    }
+    Resp::Index(Template::render("index", &context))
 }
 
 struct Logger {}
