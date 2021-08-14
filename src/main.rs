@@ -48,7 +48,7 @@ struct IndexContext<'r> {
 
 #[derive(Responder)]
 enum Resp {
-    #[response(status = 200)]
+    #[response(status = 200, content_type = "text/html; charset=utf-8")]
     Index(Template),
     #[response(status = 404)]
     NotFound(&'static str),
