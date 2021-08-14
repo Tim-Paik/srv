@@ -5,6 +5,7 @@ extern crate rocket;
 
 use colored::*;
 use rocket::fairing::{Fairing, Info, Kind};
+use rocket::figment::providers::{Env, Format, Toml};
 use rocket::response::Redirect;
 use rocket::{config::TlsConfig, fs::NamedFile};
 use rocket_dyn_templates::Template;
@@ -318,7 +319,11 @@ async fn main() {
             std::env::var("WEB_SERVER_NAME").unwrap_or("timpaik'web server".to_string()),
         ))
         .merge(("cli_colors", matches.is_present("color")))
-        .merge(("log_level", "off"));
+        .merge(("log_level", "off"))
+        .merge(("template_dir", "."))
+        // The default is "templates/", an error will be reported if the folder is not found
+        .merge(Toml::file(Env::var_or("WEB_CONFIG", "web.toml")).nested())
+        .merge(Env::prefixed("WEB_").ignore(&["PROFILE"]).global());
 
     let enable_tls = matches.is_present("cert") && matches.is_present("key");
 
@@ -355,7 +360,12 @@ async fn main() {
 
     match rocket::custom(figment)
         .attach(Logger {})
-        .attach(Template::fairing())
+        .attach(Template::custom(|engines| {
+            engines
+                .tera
+                .add_raw_template("index", include_str!("../templates/index.html.tera"))
+                .unwrap();
+        }))
         .mount("/", routes![file_server])
         .register("/", catchers![not_found])
         .launch()
