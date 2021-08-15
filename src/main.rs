@@ -22,14 +22,14 @@ async fn file_server(path: std::path::PathBuf) -> Option<NamedFile> {
     NamedFile::open(path).await.ok()
 }
 
-#[derive(rocket::serde::Serialize)]
+#[derive(Eq, Ord, PartialEq, PartialOrd, rocket::serde::Serialize)]
 #[serde(crate = "rocket::serde")]
 struct Dir {
     name: String,
     modified: String,
 }
 
-#[derive(rocket::serde::Serialize)]
+#[derive(Eq, Ord, PartialEq, PartialOrd, rocket::serde::Serialize)]
 #[serde(crate = "rocket::serde")]
 struct File {
     name: String,
@@ -146,6 +146,9 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
             }
         }
     }
+    context.title = context.paths.last().unwrap_or(&"/");
+    context.dirs.sort();
+    context.files.sort();
     Resp::Index(Template::render("index", &context))
 }
 
@@ -203,6 +206,31 @@ impl Fairing for Logger {
     }
 }
 
+struct CORS {}
+
+#[rocket::async_trait]
+
+impl Fairing for CORS {
+    fn info(&self) -> Info {
+        Info {
+            name: "CORS",
+            kind: Kind::Response,
+        }
+    }
+    async fn on_response<'r>(
+        &self,
+        _request: &'r rocket::Request<'_>,
+        response: &mut rocket::Response<'r>,
+    ) {
+        if std::env::var("ENABLE_CORS").unwrap_or("false".to_string()) == "true" {
+            response.adjoin_header(rocket::http::Header::new(
+                "Access-Control-Allow-Origin",
+                std::env::var("CORS").unwrap_or("*".to_string()),
+            ));
+        }
+    }
+}
+
 fn display_path(path: &std::path::Path) -> String {
     let root = Path::canonicalize(path).unwrap().display().to_string();
     if root.starts_with("\\\\?\\") {
@@ -222,7 +250,7 @@ async fn main() {
         (@arg upload: -u --upload "Enable file upload")
         (@arg nocache: --nocache "Disable HTTP cache")
         (@arg nocolor: --nocolor "Disable cli colors")
-        (@arg cors: --cors "Enable CORS")
+        (@arg cors: --cors [VALUE] min_values(0) max_values(1) "Enable CORS")
         (@arg spa: --spa "Enable Single-Page Application mode (always serve /index.html when the file is not found)")
         (@arg dotfiles: --dotfiles "Show dotfiles")
         (@arg open: -o --open "Open the page in the default browser")
@@ -301,6 +329,18 @@ async fn main() {
         colored::control::set_override(false);
     }
 
+    if matches.is_present("cors") {
+        std::env::set_var("ENABLE_CORS", "true");
+        match matches.value_of("cors") {
+            Some(str) => {
+                std::env::set_var("CORS", str.to_string());
+            }
+            None => {
+                std::env::set_var("CORS", "*");
+            }
+        }
+    }
+
     let figment = rocket::Config::figment()
         .merge((
             "address",
@@ -359,13 +399,14 @@ async fn main() {
     }
 
     match rocket::custom(figment)
-        .attach(Logger {})
         .attach(Template::custom(|engines| {
             engines
                 .tera
                 .add_raw_template("index", include_str!("../templates/index.html.tera"))
                 .unwrap();
         }))
+        .attach(CORS {})
+        .attach(Logger {})
         .mount("/", routes![file_server])
         .register("/", catchers![not_found])
         .launch()

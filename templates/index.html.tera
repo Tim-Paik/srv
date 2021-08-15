@@ -20,7 +20,19 @@
 
     a {
       text-decoration: none;
-      color: #116fce;
+      color: #2A52BE;
+    }
+
+    a:hover {
+      color: #1E90FF;
+    }
+
+    nav span a {
+      color: #000000;
+    }
+
+    nav span a:hover {
+      color: #2A52BE;
     }
 
     th,
