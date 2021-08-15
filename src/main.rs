@@ -34,6 +34,7 @@ struct Dir {
 struct File {
     name: String,
     size: u64,
+    filetype: String,
     modified: String,
 }
 
@@ -78,7 +79,7 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
     {
         return Resp::File(NamedFile::open(&root.join("index.html")).await.ok());
     }
-    if !localpath.is_dir() {
+    if !localpath.is_dir() || std::env::var("NOINDEX").unwrap_or("false".to_string()) == "true" {
         return Resp::NotFound("");
     }
     if !path.ends_with("/") {
@@ -107,14 +108,14 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
                         continue;
                     }
                 };
-                let filename = match path.file_name().to_str() {
+                let name = match path.file_name().to_str() {
                     Some(str) => str.to_string(),
                     None => {
                         println!("{} {}", "Error".bright_red(), "Read filename error");
                         continue;
                     }
                 };
-                if !show_dot_files && filename.starts_with(".") {
+                if !show_dot_files && name.starts_with(".") {
                     continue;
                 }
                 let metadata = match path.metadata() {
@@ -125,23 +126,58 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
                     }
                 };
                 let modified = match metadata.modified() {
-                    Ok(time) => chrono::DateTime::<chrono::Local>::from(time).to_string(),
+                    Ok(time) => chrono::DateTime::<chrono::Local>::from(time)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string(),
                     Err(e) => {
                         println!("{} {}", "Error".bright_red(), e.to_string());
                         continue;
                     }
                 };
                 if metadata.is_dir() {
-                    context.dirs.push(Dir {
-                        name: filename,
-                        modified: modified,
-                    })
+                    context.dirs.push(Dir { name, modified });
                 } else if metadata.is_file() {
+                    let size = metadata.len();
+                    let filetype = match path.path().extension() {
+                        Some(os_str) => match os_str.to_str().unwrap_or("") {
+                            "7z" => "archive",
+                            "bz" => "archive",
+                            "bz2" => "archive",
+                            "cab" => "archive",
+                            "gz" => "archive",
+                            "rar" => "archive",
+                            "xz" => "archive",
+                            "zip" => "archive",
+                            "zstd" => "archive",
+                            "doc" => "word",
+                            "docx" => "word",
+                            "ppt" => "powerpoint",
+                            "pptx" => "powerpoint",
+                            "xls" => "excel",
+                            "xlsx" => "excel",
+                            _ => {
+                                match mime_guess::from_path(path.path())
+                                    .first_or_octet_stream()
+                                    .type_()
+                                {
+                                    mime_guess::mime::AUDIO => "audio",
+                                    mime_guess::mime::IMAGE => "image",
+                                    mime_guess::mime::PDF => "pdf",
+                                    mime_guess::mime::VIDEO => "video",
+                                    mime_guess::mime::TEXT => "alt",
+                                    _ => "file",
+                                }
+                            }
+                        },
+                        None => "file",
+                    }
+                    .to_string();
                     context.files.push(File {
-                        name: filename,
-                        size: metadata.len(),
-                        modified: modified,
-                    })
+                        name,
+                        size,
+                        filetype,
+                        modified,
+                    });
                 }
             }
         }
@@ -151,6 +187,9 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
     context.files.sort();
     Resp::Index(Template::render("index", &context))
 }
+
+#[catch(500)]
+fn internal_server_error() {}
 
 struct Logger {}
 
@@ -246,7 +285,7 @@ async fn main() {
         (version: crate_version!())
         (author: crate_authors!())
         (about: crate_description!())
-        (@arg index: -i --index "Enable automatic index page generation")
+        (@arg noindex: --noindex "Disable automatic index page generation")
         (@arg upload: -u --upload "Enable file upload")
         (@arg nocache: --nocache "Disable HTTP cache")
         (@arg nocolor: --nocolor "Disable cli colors")
@@ -322,6 +361,7 @@ async fn main() {
         display_path(Path::new(matches.value_of("ROOT").unwrap_or("."))),
     );
 
+    std::env::set_var("NOINDEX", matches.is_present("noindex").to_string());
     std::env::set_var("SPA", matches.is_present("spa").to_string());
     std::env::set_var("DOTFILES", matches.is_present("dotfiles").to_string());
 
@@ -408,7 +448,7 @@ async fn main() {
         .attach(CORS {})
         .attach(Logger {})
         .mount("/", routes![file_server])
-        .register("/", catchers![not_found])
+        .register("/", catchers![not_found, internal_server_error])
         .launch()
         .await
     {
