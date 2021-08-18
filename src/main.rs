@@ -9,13 +9,23 @@ use rocket::figment::providers::{Env, Format, Toml};
 use rocket::response::Redirect;
 use rocket::{config::TlsConfig, fs::NamedFile};
 use rocket_dyn_templates::Template;
+use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
 use std::path::Path;
 use std::str::FromStr;
 
+#[inline]
+fn url_decode(data: &str) -> String {
+    match rocket::http::RawStr::url_decode_lossy(rocket::http::RawStr::new(data)) {
+        std::borrow::Cow::Borrowed(data) => data.to_string(),
+        std::borrow::Cow::Owned(data) => data.to_string(),
+    }
+}
+
 #[get("/<path..>")]
 async fn file_server(path: std::path::PathBuf) -> Option<NamedFile> {
-    let mut path = Path::new(&std::env::var("ROOT").unwrap_or(".".to_string())).join(path);
+    let mut path = Path::new(&std::env::var("ROOT").unwrap_or(".".to_string()))
+        .join(url_decode(path.to_str().unwrap_or("")));
     if path.is_dir() {
         path.push("index.html")
     }
@@ -61,11 +71,10 @@ enum Resp {
 
 #[catch(404)]
 async fn not_found(request: &rocket::Request<'_>) -> Resp {
-    let path = request.uri().path();
+    let path = url_decode(request.uri().path().as_str());
     let root = std::env::var("ROOT").unwrap_or(".".to_string());
     let root = Path::new(&root);
-    let localpath = path.to_string();
-    let localpath = localpath[1..localpath.len()].to_string();
+    let localpath = path[1..path.len()].to_string();
     // Remove the / in front of the path, if the path with / is spliced, the previous path will be ignored
     let localpath = &root.join(localpath);
     // Show dotfiles, std::path::PathBuf does not match the url beginning with the dot
@@ -95,7 +104,7 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
         if path == "" {
             continue;
         }
-        context.paths.push(path.as_str());
+        context.paths.push(path);
     }
     match std::fs::read_dir(localpath) {
         Err(e) => println!("{} {}", "Error".bright_red(), e.to_string()),
@@ -145,9 +154,11 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
                             "bz2" => "archive",
                             "cab" => "archive",
                             "gz" => "archive",
+                            "iso" => "archive",
                             "rar" => "archive",
                             "xz" => "archive",
                             "zip" => "archive",
+                            "zst" => "archive",
                             "zstd" => "archive",
                             "doc" => "word",
                             "docx" => "word",
@@ -155,6 +166,93 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
                             "pptx" => "powerpoint",
                             "xls" => "excel",
                             "xlsx" => "excel",
+                            "heic" => "image",
+                            "pdf" => "pdf",
+                            // JavaScript / TypeScript
+                            "js" => "code",
+                            "cjs" => "code",
+                            "mjs" => "code",
+                            "jsx" => "code",
+                            "ts" => "code",
+                            "tsx" => "code",
+                            "json" => "code",
+                            "coffee" => "code",
+                            // HTML / CSS
+                            "html" => "code",
+                            "htm" => "code",
+                            "xml" => "code",
+                            "xhtml" => "code",
+                            "vue" => "code",
+                            "ejs" => "code",
+                            "template" => "code",
+                            "tmpl" => "code",
+                            "pug" => "code",
+                            "art" => "code",
+                            "hbs" => "code",
+                            "tera" => "code",
+                            "css" => "code",
+                            "scss" => "code",
+                            "sass" => "code",
+                            "less" => "code",
+                            // Python
+                            "py" => "code",
+                            "pyc" => "code",
+                            // JVM
+                            "java" => "code",
+                            "kt" => "code",
+                            "kts" => "code",
+                            "gradle" => "code",
+                            "groovy" => "code",
+                            "scala" => "code",
+                            "jsp" => "code",
+                            // Shell
+                            "sh" => "code",
+                            // Php
+                            "php" => "code",
+                            // C / C++
+                            "c" => "code",
+                            "cc" => "code",
+                            "cpp" => "code",
+                            "h" => "code",
+                            "cmake" => "code",
+                            // C#
+                            "cs" => "code",
+                            "xaml" => "code",
+                            "sln" => "code",
+                            "csproj" => "code",
+                            // Golang
+                            "go" => "code",
+                            "mod" => "code",
+                            "sum" => "code",
+                            // Swift
+                            "swift" => "code",
+                            "plist" => "code",
+                            "xib" => "code",
+                            "xcconfig" => "code",
+                            "entitlements" => "code",
+                            "xcworkspacedata" => "code",
+                            "pbxproj" => "code",
+                            // Ruby
+                            "rb" => "code",
+                            // Rust
+                            "rs" => "code",
+                            // Objective-C
+                            "m" => "code",
+                            // Dart
+                            "dart" => "code",
+                            // Microsoft
+                            "manifest" => "code",
+                            "rc" => "code",
+                            "cmd" => "code",
+                            "bat" => "code",
+                            "ps1" => "code",
+                            // Config
+                            "ini" => "code",
+                            "yaml" => "code",
+                            "toml" => "code",
+                            "conf" => "code",
+                            "properties" => "code",
+                            "lock" => "alt",
                             _ => {
                                 match mime_guess::from_path(path.path())
                                     .first_or_octet_stream()
@@ -270,6 +368,7 @@ impl Fairing for CORS {
     }
 }
 
+#[inline]
 fn display_path(path: &std::path::Path) -> String {
     let root = Path::canonicalize(path).unwrap().display().to_string();
     if root.starts_with("\\\\?\\") {
@@ -287,7 +386,7 @@ async fn main() {
         (about: crate_description!())
         (@arg noindex: --noindex "Disable automatic index page generation")
         (@arg upload: -u --upload "Enable file upload")
-        (@arg nocache: --nocache "Disable HTTP cache")
+        // (@arg nocache: --nocache "Disable HTTP cache") // Not support now
         (@arg nocolor: --nocolor "Disable cli colors")
         (@arg cors: --cors [VALUE] min_values(0) max_values(1) "Enable CORS")
         (@arg spa: --spa "Enable Single-Page Application mode (always serve /index.html when the file is not found)")
@@ -305,7 +404,7 @@ async fn main() {
                 Err(e) => Err(e.to_string()),
             }
         } "Root directory")
-        (@arg address: -a --address +takes_value default_value["127.0.0.1"] {
+        (@arg address: -a --address +takes_value default_value["0.0.0.0"] {
             |s| match IpAddr::from_str(&s) {
                 Ok(_) => Ok(()),
                 Err(e) => Err(e.to_string()),
@@ -369,6 +468,17 @@ async fn main() {
         colored::control::set_override(false);
     }
 
+    match matches.value_of("auth") {
+        Some(s) => {
+            let parts = s.splitn(2, ':').collect::<Vec<&str>>();
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            parts[1].hash(&mut hash);
+            std::env::set_var("USERNAME", parts[0]);
+            std::env::set_var("PASSWORD", hash.finish().to_string());
+        }
+        None => {}
+    }
+
     if matches.is_present("cors") {
         std::env::set_var("ENABLE_CORS", "true");
         match matches.value_of("cors") {
@@ -384,7 +494,7 @@ async fn main() {
     let figment = rocket::Config::figment()
         .merge((
             "address",
-            IpAddr::from_str(matches.value_of("address").unwrap_or("127.0.0.1")).unwrap(),
+            IpAddr::from_str(matches.value_of("address").unwrap_or("0.0.0.0")).unwrap(),
         ))
         .merge((
             "port",
