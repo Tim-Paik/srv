@@ -1,46 +1,163 @@
 #[macro_use]
 extern crate clap;
 #[macro_use]
-extern crate rocket;
+extern crate lazy_static;
 
-use colored::*;
-use rocket::fairing::{Fairing, Info, Kind};
-use rocket::figment::providers::{Env, Format, Toml};
-use rocket::response::Redirect;
-use rocket::{config::TlsConfig, fs::NamedFile};
-use rocket_dyn_templates::Template;
-use std::hash::{Hash, Hasher};
-use std::net::IpAddr;
-use std::path::Path;
-use std::str::FromStr;
+use actix_files as fs;
+use actix_web::{
+    dev::{Service, ServiceResponse},
+    http, middleware, App, HttpResponse, HttpServer,
+};
+use env_logger::fmt::Color;
+use log::error;
+use sha2::Digest;
+use std::{
+    env::{set_var, var},
+    fs::read_dir,
+    io::{Error, ErrorKind, Write},
+    net::IpAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+
+lazy_static! {
+    pub static ref TEMPLATE: tera::Tera = {
+        let mut tera = tera::Tera::default();
+        tera.add_raw_template("index", include_str!("../templates/index.html.tera.embed"))
+            .unwrap();
+        tera
+    };
+}
 
 #[inline]
-fn url_decode(data: &str) -> String {
-    match rocket::http::RawStr::url_decode_lossy(rocket::http::RawStr::new(data)) {
-        std::borrow::Cow::Borrowed(data) => data.to_string(),
-        std::borrow::Cow::Owned(data) => data.to_string(),
+fn get_file_type(from: &Path) -> String {
+    match from.extension() {
+        Some(os_str) => match os_str.to_str().unwrap_or("") {
+            "7z" => "archive",
+            "bz" => "archive",
+            "bz2" => "archive",
+            "cab" => "archive",
+            "gz" => "archive",
+            "iso" => "archive",
+            "rar" => "archive",
+            "xz" => "archive",
+            "zip" => "archive",
+            "zst" => "archive",
+            "zstd" => "archive",
+            "doc" => "word",
+            "docx" => "word",
+            "ppt" => "powerpoint",
+            "pptx" => "powerpoint",
+            "xls" => "excel",
+            "xlsx" => "excel",
+            "heic" => "image",
+            "pdf" => "pdf",
+            // JavaScript / TypeScript
+            "js" => "code",
+            "cjs" => "code",
+            "mjs" => "code",
+            "jsx" => "code",
+            "ts" => "code",
+            "tsx" => "code",
+            "json" => "code",
+            "coffee" => "code",
+            // HTML / CSS
+            "html" => "code",
+            "htm" => "code",
+            "xml" => "code",
+            "xhtml" => "code",
+            "vue" => "code",
+            "ejs" => "code",
+            "template" => "code",
+            "tmpl" => "code",
+            "pug" => "code",
+            "art" => "code",
+            "hbs" => "code",
+            "tera" => "code",
+            "css" => "code",
+            "scss" => "code",
+            "sass" => "code",
+            "less" => "code",
+            // Python
+            "py" => "code",
+            "pyc" => "code",
+            // JVM
+            "java" => "code",
+            "kt" => "code",
+            "kts" => "code",
+            "gradle" => "code",
+            "groovy" => "code",
+            "scala" => "code",
+            "jsp" => "code",
+            // Shell
+            "sh" => "code",
+            // Php
+            "php" => "code",
+            // C / C++
+            "c" => "code",
+            "cc" => "code",
+            "cpp" => "code",
+            "h" => "code",
+            "cmake" => "code",
+            // C#
+            "cs" => "code",
+            "xaml" => "code",
+            "sln" => "code",
+            "csproj" => "code",
+            // Golang
+            "go" => "code",
+            "mod" => "code",
+            "sum" => "code",
+            // Swift
+            "swift" => "code",
+            "plist" => "code",
+            "xib" => "code",
+            "xcconfig" => "code",
+            "entitlements" => "code",
+            "xcworkspacedata" => "code",
+            "pbxproj" => "code",
+            // Ruby
+            "rb" => "code",
+            // Rust
+            "rs" => "code",
+            // Objective-C
+            "m" => "code",
+            // Dart
+            "dart" => "code",
+            // Microsoft
+            "manifest" => "code",
+            "rc" => "code",
+            "cmd" => "code",
+            "bat" => "code",
+            "ps1" => "code",
+            // Config
+            "ini" => "code",
+            "yaml" => "code",
+            "toml" => "code",
+            "conf" => "code",
+            "properties" => "code",
+            "lock" => "alt",
+            _ => match mime_guess::from_path(from).first_or_octet_stream().type_() {
+                mime_guess::mime::AUDIO => "audio",
+                mime_guess::mime::IMAGE => "image",
+                mime_guess::mime::PDF => "pdf",
+                mime_guess::mime::VIDEO => "video",
+                mime_guess::mime::TEXT => "alt",
+                _ => "file",
+            },
+        },
+        None => "file",
     }
+    .to_string()
 }
 
-#[get("/<path..>")]
-async fn file_server(path: std::path::PathBuf) -> Option<NamedFile> {
-    let mut path = Path::new(&std::env::var("ROOT").unwrap_or(".".to_string()))
-        .join(url_decode(path.to_str().unwrap_or("")));
-    if path.is_dir() {
-        path.push("index.html")
-    }
-    NamedFile::open(path).await.ok()
-}
-
-#[derive(Eq, Ord, PartialEq, PartialOrd, rocket::serde::Serialize)]
-#[serde(crate = "rocket::serde")]
+#[derive(Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
 struct Dir {
     name: String,
     modified: String,
 }
 
-#[derive(Eq, Ord, PartialEq, PartialOrd, rocket::serde::Serialize)]
-#[serde(crate = "rocket::serde")]
+#[derive(Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
 struct File {
     name: String,
     size: u64,
@@ -48,8 +165,7 @@ struct File {
     modified: String,
 }
 
-#[derive(rocket::serde::Serialize)]
-#[serde(crate = "rocket::serde")]
+#[derive(serde::Serialize)]
 struct IndexContext<'r> {
     title: &'r str,
     paths: Vec<&'r str>,
@@ -57,70 +173,58 @@ struct IndexContext<'r> {
     files: Vec<File>,
 }
 
-#[derive(Responder)]
-enum Resp {
-    #[response(status = 200, content_type = "text/html; charset=utf-8")]
-    Index(Template),
-    #[response(status = 404)]
-    NotFound(&'static str),
-    #[response(status = 200)]
-    File(Option<NamedFile>),
-    #[response(status = 302)]
-    Redirect(Redirect),
-}
-
-#[catch(404)]
-async fn not_found(request: &rocket::Request<'_>) -> Resp {
-    let path = url_decode(request.uri().path().as_str());
-    let root = std::env::var("ROOT").unwrap_or(".".to_string());
-    let root = Path::new(&root);
-    let localpath = path[1..path.len()].to_string();
-    // Remove the / in front of the path, if the path with / is spliced, the previous path will be ignored
-    let localpath = &root.join(localpath);
-    // Show dotfiles, std::path::PathBuf does not match the url beginning with the dot
-    let show_dot_files = std::env::var("DOTFILES").unwrap_or("false".to_string()) == "true";
-    if localpath.is_file() && show_dot_files {
-        return Resp::File(NamedFile::open(localpath).await.ok());
+fn render_index(
+    dir: &actix_files::Directory,
+    req: &actix_web::HttpRequest,
+) -> Result<ServiceResponse, std::io::Error> {
+    let mut index = dir.path.clone();
+    index.push("index.html");
+    if index.exists() && index.is_file() {
+        let res = match actix_files::NamedFile::open(index)?
+            .set_content_type(mime_guess::mime::TEXT_HTML_UTF_8)
+            .into_response(req)
+        {
+            Ok(res) => res,
+            Err(e) => return Err(Error::new(ErrorKind::Other, e.to_string())),
+        };
+        return Ok(ServiceResponse::new(req.clone(), res));
     }
-    // Single-Page Application support
-    if root.join("index.html").is_file()
-        && std::env::var("SPA").unwrap_or("false".to_string()) == "true"
-    {
-        return Resp::File(NamedFile::open(&root.join("index.html")).await.ok());
+    if var("NOINDEX").unwrap_or("false".to_string()) == "true" {
+        return Ok(ServiceResponse::new(
+            req.clone(),
+            HttpResponse::NotFound().body(""),
+        ));
     }
-    if !localpath.is_dir() || std::env::var("NOINDEX").unwrap_or("false".to_string()) == "true" {
-        return Resp::NotFound("");
-    }
-    if !path.ends_with("/") {
-        return Resp::Redirect(Redirect::to(path.to_string() + "/"));
-    }
+    let show_dot_files = var("DOTFILES").unwrap_or("false".to_string()) == "true";
     let mut context = IndexContext {
         title: "",
         paths: vec![],
         dirs: vec![],
         files: vec![],
     };
-    for path in path.split('/') {
+    for path in req.path().split('/') {
         if path == "" {
             continue;
         }
         context.paths.push(path);
     }
-    match std::fs::read_dir(localpath) {
-        Err(e) => println!("{} {}", "Error".bright_red(), e.to_string()),
+    match read_dir(&dir.path) {
+        Err(e) => {
+            error!(target: "read_dir", "[ERROR] Read dir error: {}", e.to_string());
+        }
         Ok(paths) => {
             for path in paths {
                 let path = match path {
-                    Ok(a) => a,
+                    Ok(path) => path,
                     Err(e) => {
-                        println!("{} {}", "Error".bright_red(), e.to_string());
+                        error!(target: "read_dir", "[ERROR] Read path error: {}", e.to_string());
                         continue;
                     }
                 };
                 let name = match path.file_name().to_str() {
                     Some(str) => str.to_string(),
                     None => {
-                        println!("{} {}", "Error".bright_red(), "Read filename error");
+                        error!(target: "read_dir", "[ERROR] Read filename error");
                         continue;
                     }
                 };
@@ -130,16 +234,16 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
                 let metadata = match path.metadata() {
                     Ok(data) => data,
                     Err(e) => {
-                        println!("{} {}", "Error".bright_red(), e.to_string());
+                        error!(target: "read_dir", "[ERROR] Read metadata error: {}", e.to_string());
                         continue;
                     }
                 };
                 let modified = match metadata.modified() {
                     Ok(time) => chrono::DateTime::<chrono::Local>::from(time)
-                        .format("%Y-%m-%d %H:%M:%S")
+                        .format("%Y/%m/%d %H:%M:%S")
                         .to_string(),
                     Err(e) => {
-                        println!("{} {}", "Error".bright_red(), e.to_string());
+                        error!(target: "read_dir", "[ERROR] Read modified time error: {}", e.to_string());
                         continue;
                     }
                 };
@@ -147,129 +251,7 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
                     context.dirs.push(Dir { name, modified });
                 } else if metadata.is_file() {
                     let size = metadata.len();
-                    let filetype = match path.path().extension() {
-                        Some(os_str) => match os_str.to_str().unwrap_or("") {
-                            "7z" => "archive",
-                            "bz" => "archive",
-                            "bz2" => "archive",
-                            "cab" => "archive",
-                            "gz" => "archive",
-                            "iso" => "archive",
-                            "rar" => "archive",
-                            "xz" => "archive",
-                            "zip" => "archive",
-                            "zst" => "archive",
-                            "zstd" => "archive",
-                            "doc" => "word",
-                            "docx" => "word",
-                            "ppt" => "powerpoint",
-                            "pptx" => "powerpoint",
-                            "xls" => "excel",
-                            "xlsx" => "excel",
-                            "heic" => "image",
-                            "pdf" => "pdf",
-                            // JavaScript / TypeScript
-                            "js" => "code",
-                            "cjs" => "code",
-                            "mjs" => "code",
-                            "jsx" => "code",
-                            "ts" => "code",
-                            "tsx" => "code",
-                            "json" => "code",
-                            "coffee" => "code",
-                            // HTML / CSS
-                            "html" => "code",
-                            "htm" => "code",
-                            "xml" => "code",
-                            "xhtml" => "code",
-                            "vue" => "code",
-                            "ejs" => "code",
-                            "template" => "code",
-                            "tmpl" => "code",
-                            "pug" => "code",
-                            "art" => "code",
-                            "hbs" => "code",
-                            "tera" => "code",
-                            "css" => "code",
-                            "scss" => "code",
-                            "sass" => "code",
-                            "less" => "code",
-                            // Python
-                            "py" => "code",
-                            "pyc" => "code",
-                            // JVM
-                            "java" => "code",
-                            "kt" => "code",
-                            "kts" => "code",
-                            "gradle" => "code",
-                            "groovy" => "code",
-                            "scala" => "code",
-                            "jsp" => "code",
-                            // Shell
-                            "sh" => "code",
-                            // Php
-                            "php" => "code",
-                            // C / C++
-                            "c" => "code",
-                            "cc" => "code",
-                            "cpp" => "code",
-                            "h" => "code",
-                            "cmake" => "code",
-                            // C#
-                            "cs" => "code",
-                            "xaml" => "code",
-                            "sln" => "code",
-                            "csproj" => "code",
-                            // Golang
-                            "go" => "code",
-                            "mod" => "code",
-                            "sum" => "code",
-                            // Swift
-                            "swift" => "code",
-                            "plist" => "code",
-                            "xib" => "code",
-                            "xcconfig" => "code",
-                            "entitlements" => "code",
-                            "xcworkspacedata" => "code",
-                            "pbxproj" => "code",
-                            // Ruby
-                            "rb" => "code",
-                            // Rust
-                            "rs" => "code",
-                            // Objective-C
-                            "m" => "code",
-                            // Dart
-                            "dart" => "code",
-                            // Microsoft
-                            "manifest" => "code",
-                            "rc" => "code",
-                            "cmd" => "code",
-                            "bat" => "code",
-                            "ps1" => "code",
-                            // Config
-                            "ini" => "code",
-                            "yaml" => "code",
-                            "toml" => "code",
-                            "conf" => "code",
-                            "properties" => "code",
-                            "lock" => "alt",
-                            _ => {
-                                match mime_guess::from_path(path.path())
-                                    .first_or_octet_stream()
-                                    .type_()
-                                {
-                                    mime_guess::mime::AUDIO => "audio",
-                                    mime_guess::mime::IMAGE => "image",
-                                    mime_guess::mime::PDF => "pdf",
-                                    mime_guess::mime::VIDEO => "video",
-                                    mime_guess::mime::TEXT => "alt",
-                                    _ => "file",
-                                }
-                            }
-                        },
-                        None => "file",
-                    }
-                    .to_string();
+                    let filetype = get_file_type(&path.path());
                     context.files.push(File {
                         name,
                         size,
@@ -283,93 +265,25 @@ async fn not_found(request: &rocket::Request<'_>) -> Resp {
     context.title = context.paths.last().unwrap_or(&"/");
     context.dirs.sort();
     context.files.sort();
-    Resp::Index(Template::render("index", &context))
-}
-
-#[catch(500)]
-fn internal_server_error() {}
-
-struct Logger {}
-
-#[rocket::async_trait]
-impl Fairing for Logger {
-    fn info(&self) -> Info {
-        Info {
-            name: "Logger",
-            kind: Kind::Liftoff | Kind::Response,
+    let content = tera::Context::from_serialize(&context);
+    let content = match content {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            error!(target: "tera::Context::from_serialize", "[ERROR] Read modified time error: {}", e.to_string());
+            return Err(Error::new(ErrorKind::Other, e.to_string()));
         }
-    }
-    async fn on_liftoff(&self, rocket: &rocket::Rocket<rocket::Orbit>) {
-        println!(
-            "{}",
-            format!(
-                "Serving {} on {}{}:{}",
-                std::env::var("ROOT").unwrap_or("[Get Path Error]".to_string()),
-                if rocket.config().tls_enabled() {
-                    "https://"
-                } else {
-                    "http://"
-                },
-                rocket.config().address.to_string(),
-                rocket.config().port.to_string()
-            )
-            .bright_green()
-        );
-    }
-    async fn on_response<'r>(
-        &self,
-        request: &'r rocket::Request<'_>,
-        response: &mut rocket::Response<'r>,
-    ) {
-        println!(
-            "[{}] {} | {} | {} {}",
-            chrono::Local::now()
-                .format("%Y/%m/%d %H:%M:%S")
-                .to_string()
-                .bright_blue(),
-            request
-                .client_ip()
-                .unwrap_or(IpAddr::from([0, 0, 0, 0]))
-                .to_string()
-                .bright_blue(),
-            if response.status().code < 400 {
-                response.status().code.to_string().bright_green()
-            } else {
-                response.status().code.to_string().bright_red()
-            },
-            request.method().to_string().bright_blue(),
-            request.uri().to_string().bright_blue()
-        );
-    }
-}
-
-struct CORS {}
-
-#[rocket::async_trait]
-
-impl Fairing for CORS {
-    fn info(&self) -> Info {
-        Info {
-            name: "CORS",
-            kind: Kind::Response,
-        }
-    }
-    async fn on_response<'r>(
-        &self,
-        _request: &'r rocket::Request<'_>,
-        response: &mut rocket::Response<'r>,
-    ) {
-        if std::env::var("ENABLE_CORS").unwrap_or("false".to_string()) == "true" {
-            response.adjoin_header(rocket::http::Header::new(
-                "Access-Control-Allow-Origin",
-                std::env::var("CORS").unwrap_or("*".to_string()),
-            ));
-        }
-    }
+    };
+    let index = TEMPLATE
+        .render("index", &content)
+        .unwrap_or("TEMPLATE RENDER ERROR".to_string());
+    let res = HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(index);
+    Ok(ServiceResponse::new(req.clone(), res))
 }
 
 #[inline]
-fn display_path(path: &std::path::Path) -> String {
+fn display_path(path: &Path) -> String {
     let root = Path::canonicalize(path).unwrap().display().to_string();
     if root.starts_with("\\\\?\\") {
         root[4..root.len()].to_string()
@@ -378,19 +292,46 @@ fn display_path(path: &std::path::Path) -> String {
     }
 }
 
-#[rocket::main]
-async fn main() {
+#[inline]
+fn hash(from: &str) -> String {
+    let mut hasher = sha2::Sha512::new();
+    hasher.update(from);
+    format!("{:?}", hasher.finalize())
+}
+
+#[inline]
+async fn validator(
+    req: actix_web::dev::ServiceRequest,
+    auth: actix_web_httpauth::extractors::basic::BasicAuth,
+) -> Result<actix_web::dev::ServiceRequest, actix_web::Error> {
+    if auth.user_id() == var("AUTH_USERNAME").unwrap_or("".to_string()).as_str()
+        && hash(auth.password().unwrap_or(&std::borrow::Cow::from("")))
+            == var("AUTH_PASSWORD").unwrap_or("".to_string()).as_str()
+    {
+        return Ok(req);
+    }
+    let err = actix_web_httpauth::extractors::AuthenticationError::new(
+        actix_web_httpauth::headers::www_authenticate::basic::Basic::with_realm(
+            "Incorrect username or password",
+        ),
+    );
+    Err(actix_web::Error::from(err))
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
     let matches = clap_app!((crate_name!()) =>
         (version: crate_version!())
         (author: crate_authors!())
         (about: crate_description!())
         (@arg noindex: --noindex "Disable automatic index page generation")
-        (@arg upload: -u --upload "Enable file upload")
-        // (@arg nocache: --nocache "Disable HTTP cache") // Not support now
+        (@arg compress: -c --compress "Enable streaming compression (Content-length/segment download will be disabled)")
+        // (@arg upload: -u --upload "Enable file upload")
+        (@arg nocache: --nocache "Disable HTTP cache")
         (@arg nocolor: --nocolor "Disable cli colors")
         (@arg cors: --cors [VALUE] min_values(0) max_values(1) "Enable CORS")
         (@arg spa: --spa "Enable Single-Page Application mode (always serve /index.html when the file is not found)")
-        (@arg dotfiles: --dotfiles "Show dotfiles")
+        (@arg dotfiles: -d --dotfiles "Show dotfiles")
         (@arg open: -o --open "Open the page in the default browser")
         (@arg ROOT: default_value["."] {
             |path| match std::fs::metadata(path) {
@@ -455,90 +396,69 @@ async fn main() {
     )
     .get_matches();
 
-    std::env::set_var(
+    set_var(
         "ROOT",
         display_path(Path::new(matches.value_of("ROOT").unwrap_or("."))),
     );
 
-    std::env::set_var("NOINDEX", matches.is_present("noindex").to_string());
-    std::env::set_var("SPA", matches.is_present("spa").to_string());
-    std::env::set_var("DOTFILES", matches.is_present("dotfiles").to_string());
+    set_var("NOINDEX", matches.is_present("noindex").to_string());
+    set_var("SPA", matches.is_present("spa").to_string());
+    set_var("DOTFILES", matches.is_present("dotfiles").to_string());
+    set_var("NOCACHE", matches.is_present("nocache").to_string());
+    set_var("COMPRESS", matches.is_present("compress").to_string());
 
     if matches.is_present("nocolor") {
-        colored::control::set_override(false);
+        set_var("RUST_LOG_STYLE", "never");
     }
 
     match matches.value_of("auth") {
         Some(s) => {
+            set_var("ENABLE_AUTH", matches.is_present("auth").to_string());
             let parts = s.splitn(2, ':').collect::<Vec<&str>>();
-            let mut hash = std::collections::hash_map::DefaultHasher::new();
-            parts[1].hash(&mut hash);
-            std::env::set_var("USERNAME", parts[0]);
-            std::env::set_var("PASSWORD", hash.finish().to_string());
+            set_var("AUTH_USERNAME", parts[0]);
+            set_var("AUTH_PASSWORD", hash(parts[1]));
         }
         None => {}
     }
 
     if matches.is_present("cors") {
-        std::env::set_var("ENABLE_CORS", "true");
+        set_var("ENABLE_CORS", matches.is_present("cors").to_string());
         match matches.value_of("cors") {
             Some(str) => {
-                std::env::set_var("CORS", str.to_string());
+                set_var("CORS", str.to_string());
             }
             None => {
-                std::env::set_var("CORS", "*");
+                set_var("CORS", "*");
             }
         }
     }
 
-    let figment = rocket::Config::figment()
-        .merge((
-            "address",
-            IpAddr::from_str(matches.value_of("address").unwrap_or("0.0.0.0")).unwrap(),
-        ))
-        .merge((
-            "port",
-            matches
-                .value_of("port")
-                .unwrap_or("8000")
-                .parse::<u16>()
-                .unwrap(),
-        ))
-        .merge((
-            "ident",
-            std::env::var("WEB_SERVER_NAME").unwrap_or("timpaik'web server".to_string()),
-        ))
-        .merge(("cli_colors", matches.is_present("color")))
-        .merge(("log_level", "off"))
-        .merge(("template_dir", "."))
-        // The default is "templates/", an error will be reported if the folder is not found
-        .merge(Toml::file(Env::var_or("WEB_CONFIG", "web.toml")).nested())
-        .merge(Env::prefixed("WEB_").ignore(&["PROFILE"]).global());
-
     let enable_tls = matches.is_present("cert") && matches.is_present("key");
-
-    let figment = if enable_tls {
-        let cert = Path::new(matches.value_of("cert").unwrap());
-        let key = Path::new(matches.value_of("key").unwrap());
-        figment.merge(("tls", TlsConfig::from_paths(cert, key)))
-    } else {
-        figment
-    };
+    let ip = matches
+        .value_of("address")
+        .unwrap_or("127.0.0.1")
+        .to_string();
+    let addr = format!(
+        "{}:{}",
+        ip,
+        matches.value_of("port").unwrap_or("8000").to_string()
+    );
+    let url = format!(
+        "{}{}:{}",
+        if enable_tls {
+            "https://".to_string()
+        } else {
+            "http://".to_string()
+        },
+        if ip == "0.0.0.0" {
+            "127.0.0.1"
+        } else {
+            ip.as_str()
+        },
+        matches.value_of("port").unwrap_or("8000").to_string()
+    );
 
     if matches.is_present("open") {
-        let url = format!(
-            "{}{}:{}",
-            if enable_tls {
-                "https://".to_string()
-            } else {
-                "http://".to_string()
-            },
-            matches
-                .value_of("address")
-                .unwrap_or("127.0.0.1")
-                .to_string(),
-            matches.value_of("port").unwrap_or("8000").to_string()
-        );
         if cfg!(target_os = "windows") {
             std::process::Command::new("explorer").arg(url).spawn().ok();
         } else if cfg!(target_os = "macos") {
@@ -548,23 +468,151 @@ async fn main() {
         }
     }
 
-    match rocket::custom(figment)
-        .attach(Template::custom(|engines| {
-            engines
-                .tera
-                .add_raw_template("index", include_str!("../templates/index.html.tera"))
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(|buf, record| {
+            let data = record.args().to_string();
+            let mut style = buf.style();
+            let blue = style.set_color(Color::Rgb(52, 152, 219));
+            let mut style = buf.style();
+            let red = style.set_color(Color::Rgb(231, 76, 60));
+            let mut style = buf.style();
+            let green = style.set_color(Color::Rgb(76, 175, 80));
+            if record.target() == "actix_web::middleware::logger" {
+                let data: Vec<&str> = data.splitn(5, "^").collect();
+                let time = blue.value(
+                    chrono::NaiveDateTime::from_str(data[0])
+                        .unwrap()
+                        .format("%Y/%m/%d %H:%M:%S")
+                        .to_string(),
+                );
+                let ipaddr = blue.value(data[1]);
+                let status_code = data[2].parse().unwrap_or(500);
+                let status_code = if status_code < 400 {
+                    green.value(status_code)
+                } else {
+                    red.value(status_code)
+                };
+                let process_time: Vec<&str> = data[3].splitn(2, ".").collect();
+                let process_time = process_time[0].to_string() + "ms";
+                let process_time = blue.value(if process_time.len() == 3 {
+                    "  ".to_string() + process_time.as_str()
+                } else if process_time.len() == 4 {
+                    " ".to_string() + process_time.as_str()
+                } else {
+                    process_time
+                });
+                let content = blue.value(data[4]);
+                return writeln!(
+                    buf,
+                    "\r[{}] {} | {} | {} | {}",
+                    time, ipaddr, status_code, process_time, content
+                );
+                // Add '\r' to remove the input ^C
+            } else if record.target() == "actix_server::builder" {
+                if data.starts_with("SIGINT received, exiting") {
+                    return writeln!(buf, "\r{}", green.value("[INFO] SIGINT received, exiting"));
+                } else {
+                    let data = data.replace("actix-web-service-", "");
+                    let re1 = regex::Regex::new("Starting (.*) workers").unwrap();
+                    if re1.is_match(&data) {
+                        return Ok(());
+                    }
+                    let re2 = regex::Regex::new("Starting \"(.*)\" service on (.*)").unwrap();
+                    if re2.is_match(&data) {
+                        let addr = re2
+                            .captures(&data)
+                            .unwrap()
+                            .get(1)
+                            .map_or("", |m| m.as_str());
+                        let data = format!(
+                            "[INFO] Serving {} on {}",
+                            var("ROOT").unwrap_or(".".to_string()).as_str(),
+                            addr
+                        );
+                        return writeln!(buf, "\r{}", green.value(data));
+                    }
+                }
+            }
+            if data.starts_with("[ERROR]") {
+                writeln!(buf, "\r{}", red.value(data))
+            } else {
+                writeln!(buf, "\r{}", green.value(data))
+            }
+        })
+        .init();
+
+    let server = HttpServer::new(move || {
+        let compress = if var("COMPRESS").unwrap_or("false".to_string()) == "true" {
+            http::header::ContentEncoding::Auto
+        } else {
+            http::header::ContentEncoding::Identity
+        };
+        let app = App::new()
+            .wrap(middleware::Compress::new(compress))
+            .wrap(middleware::Condition::new(
+                true,
+                middleware::NormalizePath::default(),
+            ))
+            .wrap(middleware::Condition::new(
+                var("ENABLE_AUTH").unwrap_or("false".to_string()) == "true",
+                actix_web_httpauth::middleware::HttpAuthentication::basic(validator),
+            ))
+            .wrap_fn(|req, srv| {
+                let paths = PathBuf::from_str(req.path()).unwrap_or(PathBuf::default());
+                let mut isdotfile = false;
+                for path in paths.iter() {
+                    if path.to_string_lossy().starts_with('.') {
+                        isdotfile = true;
+                    }
+                }
+                let fut = srv.call(req);
+                async move {
+                    let res = fut.await?.map_body(|head, mut body| {
+                        if var("NOCACHE").unwrap_or("false".to_string()) == "true" {
+                            head.headers_mut().insert(
+                                http::header::CACHE_CONTROL,
+                                http::HeaderValue::from_static("no-store"),
+                            );
+                        }
+                        if var("ENABLE_CORS").unwrap_or("false".to_string()) == "true" {
+                            let cors = var("CORS").unwrap_or("*".to_string());
+                            let cors = http::HeaderValue::from_str(cors.as_str())
+                                .unwrap_or(http::HeaderValue::from_static("*"));
+                            head.headers_mut()
+                                .insert(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, cors);
+                        }
+                        if isdotfile && !(var("DOTFILES").unwrap_or("false".to_string()) == "true")
+                        {
+                            head.status = http::StatusCode::FORBIDDEN;
+                            *head.headers_mut() = http::HeaderMap::new();
+                            let _ = body.take_body();
+                        }
+                        body
+                    });
+                    Ok(res)
+                }
+            })
+            .wrap(middleware::Logger::new("%t^%a^%s^%D^%r"));
+        let files = fs::Files::new("/", var("ROOT").unwrap_or(".".to_string()))
+            .use_hidden_files()
+            .prefer_utf8(true)
+            .show_files_listing()
+            .files_listing_renderer(render_index);
+        return app.service(files);
+    });
+    let server = if enable_tls {
+        let cert = Path::new(matches.value_of("cert").unwrap());
+        let key = Path::new(matches.value_of("key").unwrap());
+        let mut builder =
+            openssl::ssl::SslAcceptor::mozilla_intermediate(openssl::ssl::SslMethod::tls())
                 .unwrap();
-        }))
-        .attach(CORS {})
-        .attach(Logger {})
-        .mount("/", routes![file_server])
-        .register("/", catchers![not_found, internal_server_error])
-        .launch()
-        .await
-    {
-        Ok(_) => {}
-        Err(e) => {
-            println!("{}", format!("[Error] {}", e.to_string()).bright_red());
-        }
+        builder
+            .set_private_key_file(key, openssl::ssl::SslFiletype::PEM)
+            .unwrap();
+        builder.set_certificate_chain_file(cert).unwrap();
+        server.bind_openssl(addr, builder)
+    } else {
+        server.bind(addr)
     };
+    server?.run().await
 }
