@@ -42,6 +42,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2
+      - run: vcpkg integrate install
       - run: vcpkg install openssl:x64-windows
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
