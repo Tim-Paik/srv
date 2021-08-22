@@ -42,6 +42,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2
+      - uses: crazy-max/ghaction-chocolatey@v1
+        with:
+          args: install openssl
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: web
