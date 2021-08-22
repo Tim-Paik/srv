@@ -45,10 +45,6 @@ jobs:
       - uses: lukka/run-vcpkg@v7
         with:
           setupOnly: true
-          vcpkgDirectory: "${{ github.workspace }}/vcpkg"
-          appendedCacheKey: ${{ hashFiles( '**/vcpkg_manifest/vcpkg.json' ) }}
-          vcpkgTriplet: ${{ matrix.triplet }}
-          additionalCachedPaths: ${{ env.buildDir }}/vcpkg_installed
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: web
