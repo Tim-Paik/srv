@@ -42,9 +42,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: lukka/run-vcpkg@v7
-        with:
-          setupOnly: true
+        run: vcpkg install openssl:x64-windows
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: web
