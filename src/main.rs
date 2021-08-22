@@ -5,11 +5,11 @@ extern crate lazy_static;
 
 use actix_files as fs;
 use actix_web::{
-    dev::{Service, ServiceResponse},
+    dev::{self, Service, ServiceResponse},
     http, middleware, App, HttpResponse, HttpServer,
 };
 use env_logger::fmt::Color;
-use log::error;
+use log::{error, info};
 use sha2::Digest;
 use std::{
     env::{set_var, var},
@@ -23,7 +23,7 @@ use std::{
 lazy_static! {
     pub static ref TEMPLATE: tera::Tera = {
         let mut tera = tera::Tera::default();
-        tera.add_raw_template("index", include_str!("../templates/index.html.tera.embed"))
+        tera.add_raw_template("index", include_str!("../templates/index.html.tera"))
             .unwrap();
         tera
     };
@@ -301,9 +301,9 @@ fn hash(from: &str) -> String {
 
 #[inline]
 async fn validator(
-    req: actix_web::dev::ServiceRequest,
+    req: dev::ServiceRequest,
     auth: actix_web_httpauth::extractors::basic::BasicAuth,
-) -> Result<actix_web::dev::ServiceRequest, actix_web::Error> {
+) -> Result<dev::ServiceRequest, actix_web::Error> {
     if auth.user_id() == var("AUTH_USERNAME").unwrap_or("".to_string()).as_str()
         && hash(auth.password().unwrap_or(&std::borrow::Cow::from("")))
             == var("AUTH_PASSWORD").unwrap_or("".to_string()).as_str()
@@ -333,6 +333,8 @@ async fn main() -> std::io::Result<()> {
         (@arg spa: --spa "Enable Single-Page Application mode (always serve /index.html when the file is not found)")
         (@arg dotfiles: -d --dotfiles "Show dotfiles")
         (@arg open: -o --open "Open the page in the default browser")
+        (@arg quiet: -q --quiet "Disable access log output")
+        (@arg quietall: --quietall "Disable all output")
         (@arg ROOT: default_value["."] {
             |path| match std::fs::metadata(path) {
                 Ok(meta) => {
@@ -393,6 +395,25 @@ async fn main() -> std::io::Result<()> {
                 Err(e) => Err(e.to_string()),
             }
         } "Path of TLS/SSL private key")
+        (@subcommand doc =>
+            (about: "Open cargo doc via local server (Need cargo installation)")
+            (@arg nocolor: --nocolor "Disable cli colors")
+            (@arg noopen: -no --noopen "Do not open the page in the default browser")
+            (@arg log: --log "Enable access log output [default: false]")
+            (@arg quietall: --quietall "Disable all output")
+            (@arg address: -a --address +takes_value default_value["0.0.0.0"] {
+                |s| match IpAddr::from_str(&s) {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(e.to_string()),
+                }
+            } "IP address to serve on")
+            (@arg port: -p --port +takes_value default_value["8000"] {
+                |s| match s.parse::<u16>() {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(e.to_string()),
+                }
+            } "Port to serve on")
+        )
     )
     .get_matches();
 
@@ -406,6 +427,8 @@ async fn main() -> std::io::Result<()> {
     set_var("DOTFILES", matches.is_present("dotfiles").to_string());
     set_var("NOCACHE", matches.is_present("nocache").to_string());
     set_var("COMPRESS", matches.is_present("compress").to_string());
+    set_var("QUIET", matches.is_present("quiet").to_string());
+    set_var("QUIETALL", matches.is_present("quietall").to_string());
 
     if matches.is_present("nocolor") {
         set_var("RUST_LOG_STYLE", "never");
@@ -458,7 +481,7 @@ async fn main() -> std::io::Result<()> {
         matches.value_of("port").unwrap_or("8000").to_string()
     );
 
-    if matches.is_present("open") {
+    let open_in_browser = |url: &str| {
         if cfg!(target_os = "windows") {
             std::process::Command::new("explorer").arg(url).spawn().ok();
         } else if cfg!(target_os = "macos") {
@@ -466,10 +489,17 @@ async fn main() -> std::io::Result<()> {
         } else if cfg!(target_os = "linux") {
             std::process::Command::new("xdg-open").arg(url).spawn().ok();
         }
+    };
+
+    if matches.is_present("open") {
+        open_in_browser(&url);
     }
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format(|buf, record| {
+            if var("QUIETALL").unwrap_or("false".to_string()) == "true" {
+                return Ok(());
+            }
             let data = record.args().to_string();
             let mut style = buf.style();
             let blue = style.set_color(Color::Rgb(52, 152, 219));
@@ -478,6 +508,9 @@ async fn main() -> std::io::Result<()> {
             let mut style = buf.style();
             let green = style.set_color(Color::Rgb(76, 175, 80));
             if record.target() == "actix_web::middleware::logger" {
+                if var("QUIET").unwrap_or("false".to_string()) == "true" {
+                    return Ok(());
+                }
                 let data: Vec<&str> = data.splitn(5, "^").collect();
                 let time = blue.value(
                     chrono::NaiveDateTime::from_str(data[0])
@@ -541,6 +574,68 @@ async fn main() -> std::io::Result<()> {
         })
         .init();
 
+    let addr = if let Some(matches) = matches.subcommand_matches("doc") {
+        info!("[INFO] Generating document (may take a while)");
+        match std::process::Command::new("cargo").arg("doc").output() {
+            Ok(output) => {
+                let output = std::str::from_utf8(&output.stderr).unwrap_or("");
+                if output.starts_with("error: could not find `Cargo.toml` in") {
+                    error!("[ERROR] Cargo.toml Not Found");
+                    return Ok(());
+                } else if output.starts_with("error: ") {
+                    error!(
+                        "[ERROR] {}",
+                        output.strip_prefix("error: ").unwrap_or(output)
+                    );
+                }
+            }
+            Err(e) => {
+                error!("[ERROR] Cargo Error: {}", e.to_string());
+                return Ok(());
+            }
+        }
+        let path = Path::new("./target/doc/");
+        let mut index_path = path.to_path_buf();
+        index_path.push(crate_name!().to_string() + "/index.html");
+        if !index_path.exists() || !index_path.is_file() {
+            error!("[ERROR] Cargo Error: doc path not found");
+            return Ok(());
+        }
+        set_var("ROOT", display_path(path));
+        let ip = matches
+            .value_of("address")
+            .unwrap_or("127.0.0.1")
+            .to_string();
+        let addr = format!(
+            "{}:{}",
+            ip,
+            matches.value_of("port").unwrap_or("8000").to_string()
+        );
+        let url = format!(
+            "http://{}:{}/{}/index.html",
+            if ip == "0.0.0.0" {
+                "127.0.0.1"
+            } else {
+                ip.as_str()
+            },
+            matches.value_of("port").unwrap_or("8000").to_string(),
+            crate_name!(),
+        );
+        if !matches.is_present("noopen") {
+            open_in_browser(&url);
+        }
+        if !matches.is_present("log") {
+            set_var("QUIET", true.to_string());
+        }
+        if matches.is_present("nocolor") {
+            set_var("RUST_LOG_STYLE", "never");
+        }
+        set_var("QUIETALL", matches.is_present("quietall").to_string());
+        addr
+    } else {
+        addr
+    };
+
     let server = HttpServer::new(move || {
         let compress = if var("COMPRESS").unwrap_or("false".to_string()) == "true" {
             http::header::ContentEncoding::Auto
@@ -549,10 +644,6 @@ async fn main() -> std::io::Result<()> {
         };
         let app = App::new()
             .wrap(middleware::Compress::new(compress))
-            .wrap(middleware::Condition::new(
-                true,
-                middleware::NormalizePath::default(),
-            ))
             .wrap(middleware::Condition::new(
                 var("ENABLE_AUTH").unwrap_or("false".to_string()) == "true",
                 actix_web_httpauth::middleware::HttpAuthentication::basic(validator),
@@ -567,7 +658,7 @@ async fn main() -> std::io::Result<()> {
                 }
                 let fut = srv.call(req);
                 async move {
-                    let res = fut.await?.map_body(|head, mut body| {
+                    Ok(fut.await?.map_body(|head, mut body| {
                         if var("NOCACHE").unwrap_or("false".to_string()) == "true" {
                             head.headers_mut().insert(
                                 http::header::CACHE_CONTROL,
@@ -586,10 +677,10 @@ async fn main() -> std::io::Result<()> {
                             head.status = http::StatusCode::FORBIDDEN;
                             *head.headers_mut() = http::HeaderMap::new();
                             let _ = body.take_body();
+                            head.set_connection_type(http::ConnectionType::Close);
                         }
                         body
-                    });
-                    Ok(res)
+                    }))
                 }
             })
             .wrap(middleware::Logger::new("%t^%a^%s^%D^%r"));
@@ -597,7 +688,26 @@ async fn main() -> std::io::Result<()> {
             .use_hidden_files()
             .prefer_utf8(true)
             .show_files_listing()
-            .files_listing_renderer(render_index);
+            .files_listing_renderer(render_index)
+            .default_handler(|req: dev::ServiceRequest| {
+                let (http_req, _payload) = req.into_parts();
+                async {
+                    let path = var("ROOT").unwrap_or(".".to_string());
+                    let mut path = Path::new(&path).to_path_buf();
+                    path.push("index.html");
+                    if path.exists()
+                        && path.is_file()
+                        && var("SPA").unwrap_or("false".to_string()) == "true"
+                    {
+                        let res = fs::NamedFile::open(path)?.into_response(&http_req)?;
+                        return Ok(ServiceResponse::new(http_req, res));
+                    }
+                    return Ok(ServiceResponse::new(
+                        http_req,
+                        HttpResponse::NotFound().body(""),
+                    ));
+                }
+            });
         return app.service(files);
     });
     let server = if enable_tls {
