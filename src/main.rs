@@ -14,7 +14,7 @@ use sha2::Digest;
 use std::{
     env::{set_var, var},
     fs::read_dir,
-    io::{Error, ErrorKind, Write},
+    io::{Error, ErrorKind, Read, Write},
     net::IpAddr,
     path::{Path, PathBuf},
     str::FromStr,
@@ -149,6 +149,16 @@ fn get_file_type(from: &Path) -> String {
         None => "file",
     }
     .to_string()
+}
+
+#[derive(serde::Deserialize)]
+struct Package {
+    name: String,
+}
+
+#[derive(serde::Deserialize)]
+struct CargoToml {
+    package: Package,
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
@@ -473,11 +483,7 @@ async fn main() -> std::io::Result<()> {
         } else {
             "http://".to_string()
         },
-        if ip == "0.0.0.0" {
-            "127.0.0.1"
-        } else {
-            ip.as_str()
-        },
+        if ip == "0.0.0.0" { "127.0.0.1" } else { &ip },
         matches.value_of("port").unwrap_or("8000").to_string()
     );
 
@@ -528,9 +534,9 @@ async fn main() -> std::io::Result<()> {
                 let process_time: Vec<&str> = data[3].splitn(2, ".").collect();
                 let process_time = process_time[0].to_string() + "ms";
                 let process_time = blue.value(if process_time.len() == 3 {
-                    "  ".to_string() + process_time.as_str()
+                    "  ".to_string() + &process_time
                 } else if process_time.len() == 4 {
-                    " ".to_string() + process_time.as_str()
+                    " ".to_string() + &process_time
                 } else {
                     process_time
                 });
@@ -559,7 +565,7 @@ async fn main() -> std::io::Result<()> {
                             .map_or("", |m| m.as_str());
                         let data = format!(
                             "[INFO] Serving {} on {}",
-                            var("ROOT").unwrap_or(".".to_string()).as_str(),
+                            var("ROOT").unwrap_or(".".to_string()),
                             addr
                         );
                         return writeln!(buf, "\r{}", green.value(data));
@@ -576,6 +582,29 @@ async fn main() -> std::io::Result<()> {
 
     let addr = if let Some(matches) = matches.subcommand_matches("doc") {
         info!("[INFO] Generating document (may take a while)");
+        let mut cargo_toml = match std::fs::File::open("./Cargo.toml") {
+            Ok(file) => file,
+            Err(e) => {
+                error!("[ERROR] {}", e.to_string());
+                return Ok(());
+            }
+        };
+        let mut contents = String::new();
+        match cargo_toml.read_to_string(&mut contents) {
+            Ok(_) => {}
+            Err(e) => {
+                error!("[ERROR] {}", e.to_string());
+                return Ok(());
+            }
+        }
+        let contents: CargoToml = match toml::from_str(&contents) {
+            Ok(t) => t,
+            Err(e) => {
+                error!("[ERROR] {}", e.to_string());
+                return Ok(());
+            }
+        };
+        let crate_name = contents.package.name;
         match std::process::Command::new("cargo").arg("doc").output() {
             Ok(output) => {
                 let output = std::str::from_utf8(&output.stderr).unwrap_or("");
@@ -587,6 +616,7 @@ async fn main() -> std::io::Result<()> {
                         "[ERROR] {}",
                         output.strip_prefix("error: ").unwrap_or(output)
                     );
+                    return Ok(());
                 }
             }
             Err(e) => {
@@ -596,7 +626,7 @@ async fn main() -> std::io::Result<()> {
         }
         let path = Path::new("./target/doc/");
         let mut index_path = path.to_path_buf();
-        index_path.push(crate_name!().to_string() + "/index.html");
+        index_path.push(crate_name.to_string() + "/index.html");
         if !index_path.exists() || !index_path.is_file() {
             error!("[ERROR] Cargo Error: doc path not found");
             return Ok(());
@@ -613,13 +643,9 @@ async fn main() -> std::io::Result<()> {
         );
         let url = format!(
             "http://{}:{}/{}/index.html",
-            if ip == "0.0.0.0" {
-                "127.0.0.1"
-            } else {
-                ip.as_str()
-            },
+            if ip == "0.0.0.0" { "127.0.0.1" } else { &ip },
             matches.value_of("port").unwrap_or("8000").to_string(),
-            crate_name!(),
+            crate_name,
         );
         if !matches.is_present("noopen") {
             open_in_browser(&url);
@@ -667,7 +693,7 @@ async fn main() -> std::io::Result<()> {
                         }
                         if var("ENABLE_CORS").unwrap_or("false".to_string()) == "true" {
                             let cors = var("CORS").unwrap_or("*".to_string());
-                            let cors = http::HeaderValue::from_str(cors.as_str())
+                            let cors = http::HeaderValue::from_str(&cors)
                                 .unwrap_or(http::HeaderValue::from_static("*"));
                             head.headers_mut()
                                 .insert(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, cors);

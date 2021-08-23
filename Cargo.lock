@@ -2143,6 +2143,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a31142970826733df8241ef35dc040ef98c679ab14d7c3e54d827099b3acecaa"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "tracing"
 version = "0.1.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2463,7 +2472,7 @@ checksum = "acdb075a845574a1fa5f09fd77e43f7747599301ea3417a9fbffdeedfc1f4a29"
 
 [[package]]
 name = "web"
-version = "0.7.2-beta"
+version = "0.8.0-beta"
 dependencies = [
  "actix-files",
  "actix-http",
@@ -2480,6 +2489,7 @@ dependencies = [
  "serde",
  "sha2",
  "tera",
+ "toml",
 ]
 
 [[package]]

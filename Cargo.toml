@@ -3,7 +3,7 @@ authors = ["Tim_Paik <timpaikc@outlook.com>"]
 description = "simple http server written in rust"
 edition = "2018"
 name = "web"
-version = "0.7.2-beta"
+version = "0.8.0-beta"
 
 [dependencies]
 actix-files = "0.5"
@@ -21,6 +21,7 @@ regex = "1.5"
 serde = "1"
 sha2 = "0.9"
 tera = "1"
+toml = "0.5"
 
 [profile.release]
 lto = true
