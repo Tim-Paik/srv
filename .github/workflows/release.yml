@@ -14,36 +14,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  upload-assets-linux:
-    runs-on: ubuntu-latest
+  upload-assets:
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
-      - uses: taiki-e/upload-rust-binary-action@v1
-        with:
-          bin: web
-          tar: unix
-          zip: windows
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  upload-assets-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: taiki-e/upload-rust-binary-action@v1
-        with:
-          bin: web
-          tar: unix
-          zip: windows
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  upload-assets-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v2
-      # - run: vcpkg integrate install
-      # - run: vcpkg install openssl:x64-windows-static-md
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: web
