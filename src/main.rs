@@ -14,7 +14,7 @@ use sha2::Digest;
 use std::{
     env::{set_var, var},
     fs::read_dir,
-    io::{Error, ErrorKind, Read, Write},
+    io::{BufReader, Error, ErrorKind, Read, Write},
     net::IpAddr,
     path::{Path, PathBuf},
     str::FromStr,
@@ -737,16 +737,17 @@ async fn main() -> std::io::Result<()> {
         return app.service(files);
     });
     let server = if enable_tls {
-        let cert = Path::new(matches.value_of("cert").unwrap());
-        let key = Path::new(matches.value_of("key").unwrap());
-        let mut builder =
-            openssl::ssl::SslAcceptor::mozilla_intermediate(openssl::ssl::SslMethod::tls())
-                .unwrap();
-        builder
-            .set_private_key_file(key, openssl::ssl::SslFiletype::PEM)
-            .unwrap();
-        builder.set_certificate_chain_file(cert).unwrap();
-        server.bind_openssl(addr, builder)
+        let cert = &mut BufReader::new(
+            std::fs::File::open(Path::new(matches.value_of("cert").unwrap())).unwrap(),
+        );
+        let key = &mut BufReader::new(
+            std::fs::File::open(Path::new(matches.value_of("key").unwrap())).unwrap(),
+        );
+        let mut config = rustls::ServerConfig::new(rustls::NoClientAuth::new());
+        let cert_chain = rustls::internal::pemfile::certs(cert).unwrap();
+        let mut keys = rustls::internal::pemfile::rsa_private_keys(key).unwrap();
+        config.set_single_cert(cert_chain, keys.remove(0)).unwrap();
+        server.bind_rustls(addr, config)
     } else {
         server.bind(addr)
     };

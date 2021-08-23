@@ -3,12 +3,12 @@ authors = ["Tim_Paik <timpaikc@outlook.com>"]
 description = "simple http server written in rust"
 edition = "2018"
 name = "web"
-version = "0.8.0-beta"
+version = "0.8.1-beta"
 
 [dependencies]
 actix-files = "0.5"
 actix-http = "2.2"
-actix-web = {version = "3.3", features = ["openssl"]}
+actix-web = {version = "3.3", features = ["rustls"]}
 actix-web-httpauth = "0.5"
 chrono = "0.4"
 clap = {version = "3.0.0-beta.4", features = ["wrap_help", "color"]}
@@ -16,8 +16,8 @@ env_logger = "0.9"
 lazy_static = "1.4"
 log = "0.4"
 mime_guess = "2"
-openssl = {version = "0.10", features = ["v110"]}
 regex = "1.5"
+rustls = "0.18"
 serde = "1"
 sha2 = "0.9"
 tera = "1"
