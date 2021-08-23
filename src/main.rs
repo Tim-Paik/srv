@@ -492,7 +492,13 @@ async fn main() -> std::io::Result<()> {
             std::process::Command::new("explorer").arg(url).spawn().ok();
         } else if cfg!(target_os = "macos") {
             std::process::Command::new("open").arg(url).spawn().ok();
-        } else if cfg!(target_os = "linux") {
+        } else if cfg!(target_os = "linux")
+            || cfg!(target_os = "android")
+            || cfg!(target_os = "freebsd")
+            || cfg!(target_os = "dragonfly")
+            || cfg!(target_os = "openbsd")
+            || cfg!(target_os = "netbsd")
+        {
             std::process::Command::new("xdg-open").arg(url).spawn().ok();
         }
     };
@@ -572,7 +578,7 @@ async fn main() -> std::io::Result<()> {
                     }
                 }
             }
-            if data.starts_with("[ERROR]") {
+            if data.starts_with("[ERROR]") || data.starts_with("TLS alert") {
                 writeln!(buf, "\r{}", red.value(data))
             } else {
                 writeln!(buf, "\r{}", green.value(data))
@@ -581,7 +587,6 @@ async fn main() -> std::io::Result<()> {
         .init();
 
     let addr = if let Some(matches) = matches.subcommand_matches("doc") {
-        info!("[INFO] Generating document (may take a while)");
         let mut cargo_toml = match std::fs::File::open("./Cargo.toml") {
             Ok(file) => file,
             Err(e) => {
@@ -605,6 +610,7 @@ async fn main() -> std::io::Result<()> {
             }
         };
         let crate_name = contents.package.name;
+        info!("[INFO] Generating document (may take a while)");
         match std::process::Command::new("cargo").arg("doc").output() {
             Ok(output) => {
                 let output = std::str::from_utf8(&output.stderr).unwrap_or("");
@@ -745,7 +751,7 @@ async fn main() -> std::io::Result<()> {
         );
         let mut config = rustls::ServerConfig::new(rustls::NoClientAuth::new());
         let cert_chain = rustls::internal::pemfile::certs(cert).unwrap();
-        let mut keys = rustls::internal::pemfile::rsa_private_keys(key).unwrap();
+        let mut keys = rustls::internal::pemfile::pkcs8_private_keys(key).unwrap();
         config.set_single_cert(cert_chain, keys.remove(0)).unwrap();
         server.bind_rustls(addr, config)
     } else {
