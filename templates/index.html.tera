@@ -18,6 +18,7 @@
     #header,
     #meta,
     #listing {
+      font-family: sans-serif;
       padding: 0;
       margin: 0;
       border-spacing: 0;
@@ -131,22 +132,37 @@
     }
 
     @media (prefers-color-scheme: dark) {
-      html {
-        color: #444444;
-        filter: invert(1);
+
+      html,
+      body,
+      #header,
+      #meta,
+      #listing {
+        color: #cacaca;
+        background: #000000;
       }
 
-      #listing a span {
-        filter: invert(1);
+      #header nav span a {
+        color: #cacaca;
+      }
+
+      #header {
+        padding: 1.5rem 5% 1rem;
+        background-color: #0e0e0e;
+      }
+
+      #listing table {
+        border-top: 1px dashed #999999;
+      }
+
+      #listing th,
+      #listing td {
+        border-bottom: 1px dashed #999999;
       }
 
       #listing .goup svg,
       #listing .file svg {
-        fill: #444444;
-      }
-
-      #listing .dir svg {
-        filter: invert(1);
+        fill: #cacaca;
       }
 
       #header a,
