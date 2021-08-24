@@ -437,9 +437,13 @@ async fn main() -> std::io::Result<()> {
     set_var("DOTFILES", matches.is_present("dotfiles").to_string());
     set_var("NOCACHE", matches.is_present("nocache").to_string());
     set_var("COMPRESS", matches.is_present("compress").to_string());
-    set_var("QUIET", matches.is_present("quiet").to_string());
-    set_var("QUIETALL", matches.is_present("quietall").to_string());
 
+    if matches.is_present("quiet") {
+        set_var("RUST_LOG", "info,actix_web::middleware::logger=off");
+    }
+    if matches.is_present("quietall") {
+        set_var("RUST_LOG", "off");
+    }
     if matches.is_present("nocolor") {
         set_var("RUST_LOG_STYLE", "never");
     }
@@ -506,85 +510,6 @@ async fn main() -> std::io::Result<()> {
     if matches.is_present("open") {
         open_in_browser(&url);
     }
-
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format(|buf, record| {
-            if var("QUIETALL").unwrap_or("false".to_string()) == "true" {
-                return Ok(());
-            }
-            let data = record.args().to_string();
-            let mut style = buf.style();
-            let blue = style.set_color(Color::Rgb(52, 152, 219));
-            let mut style = buf.style();
-            let red = style.set_color(Color::Rgb(231, 76, 60));
-            let mut style = buf.style();
-            let green = style.set_color(Color::Rgb(76, 175, 80));
-            if record.target() == "actix_web::middleware::logger" {
-                if var("QUIET").unwrap_or("false".to_string()) == "true" {
-                    return Ok(());
-                }
-                let data: Vec<&str> = data.splitn(5, "^").collect();
-                let time = blue.value(
-                    chrono::NaiveDateTime::from_str(data[0])
-                        .unwrap()
-                        .format("%Y/%m/%d %H:%M:%S")
-                        .to_string(),
-                );
-                let ipaddr = blue.value(data[1]);
-                let status_code = data[2].parse().unwrap_or(500);
-                let status_code = if status_code < 400 {
-                    green.value(status_code)
-                } else {
-                    red.value(status_code)
-                };
-                let process_time: Vec<&str> = data[3].splitn(2, ".").collect();
-                let process_time = process_time[0].to_string() + "ms";
-                let process_time = blue.value(if process_time.len() == 3 {
-                    "  ".to_string() + &process_time
-                } else if process_time.len() == 4 {
-                    " ".to_string() + &process_time
-                } else {
-                    process_time
-                });
-                let content = blue.value(data[4]);
-                return writeln!(
-                    buf,
-                    "\r[{}] {} | {} | {} | {}",
-                    time, ipaddr, status_code, process_time, content
-                );
-                // Add '\r' to remove the input ^C
-            } else if record.target() == "actix_server::builder" {
-                if data.starts_with("SIGINT received, exiting") {
-                    return writeln!(buf, "\r{}", green.value("[INFO] SIGINT received, exiting"));
-                } else {
-                    let data = data.replace("actix-web-service-", "");
-                    let re1 = regex::Regex::new("Starting (.*) workers").unwrap();
-                    if re1.is_match(&data) {
-                        return Ok(());
-                    }
-                    let re2 = regex::Regex::new("Starting \"(.*)\" service on (.*)").unwrap();
-                    if re2.is_match(&data) {
-                        let addr = re2
-                            .captures(&data)
-                            .unwrap()
-                            .get(1)
-                            .map_or("", |m| m.as_str());
-                        let data = format!(
-                            "[INFO] Serving {} on {}",
-                            var("ROOT").unwrap_or(".".to_string()),
-                            addr
-                        );
-                        return writeln!(buf, "\r{}", green.value(data));
-                    }
-                }
-            }
-            if data.starts_with("[ERROR]") || data.starts_with("TLS alert") {
-                writeln!(buf, "\r{}", red.value(data))
-            } else {
-                writeln!(buf, "\r{}", green.value(data))
-            }
-        })
-        .init();
 
     let addr = if let Some(matches) = matches.subcommand_matches("doc") {
         let mut cargo_toml = match std::fs::File::open("./Cargo.toml") {
@@ -657,16 +582,96 @@ async fn main() -> std::io::Result<()> {
             open_in_browser(&url);
         }
         if !matches.is_present("log") {
-            set_var("QUIET", true.to_string());
+            set_var("RUST_LOG", "info,actix_web::middleware::logger=off");
+        }
+        if matches.is_present("quietall") {
+            set_var("RUST_LOG", "off");
         }
         if matches.is_present("nocolor") {
             set_var("RUST_LOG_STYLE", "never");
         }
-        set_var("QUIETALL", matches.is_present("quietall").to_string());
         addr
     } else {
         addr
     };
+
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info"),
+    )
+    .format(|buf, record| {
+        let data = record.args().to_string();
+        let mut style = buf.style();
+        let blue = style.set_color(Color::Rgb(52, 152, 219));
+        let mut style = buf.style();
+        let red = style.set_color(Color::Rgb(231, 76, 60));
+        let mut style = buf.style();
+        let green = style.set_color(Color::Rgb(76, 175, 80));
+        if record.target() == "actix_web::middleware::logger" {
+            let data: Vec<&str> = data.splitn(5, "^").collect();
+            let time = blue.value(
+                chrono::NaiveDateTime::from_str(data[0])
+                    .unwrap()
+                    .format("%Y/%m/%d %H:%M:%S")
+                    .to_string(),
+            );
+            let ipaddr = blue.value(data[1]);
+            let status_code = data[2].parse().unwrap_or(500);
+            let status_code = if status_code < 400 {
+                green.value(status_code)
+            } else {
+                red.value(status_code)
+            };
+            let process_time: Vec<&str> = data[3].splitn(2, ".").collect();
+            let process_time = process_time[0].to_string() + "ms";
+            let process_time = blue.value(if process_time.len() == 3 {
+                "  ".to_string() + &process_time
+            } else if process_time.len() == 4 {
+                " ".to_string() + &process_time
+            } else {
+                process_time
+            });
+            let content = blue.value(data[4]);
+            return writeln!(
+                buf,
+                "[{}] {} | {} | {} | {}",
+                time, ipaddr, status_code, process_time, content
+            );
+        } else if record.target() == "actix_server::builder" {
+            if data.starts_with("SIGINT received, exiting") {
+                return writeln!(buf, "\r{}", green.value("[INFO] SIGINT received, exiting"));
+                // Add '\r' to remove the input ^C
+            } else {
+                let data = data.replace("actix-web-service-", "");
+                let re1 = regex::Regex::new("Starting (.*) workers").unwrap();
+                if re1.is_match(&data) {
+                    return Ok(());
+                }
+                let re2 = regex::Regex::new("Starting \"(.*)\" service on (.*)").unwrap();
+                if re2.is_match(&data) {
+                    let addr = re2
+                        .captures(&data)
+                        .unwrap()
+                        .get(1)
+                        .map_or("", |m| m.as_str());
+                    let data = format!(
+                        "[INFO] Serving {} on {}",
+                        var("ROOT").unwrap_or(".".to_string()),
+                        addr
+                    );
+                    return writeln!(buf, "\r{}", green.value(data));
+                }
+            }
+        }
+        if data.starts_with("[ERROR]")
+            || data.starts_with("TLS alert")
+            || data.starts_with("Failed")
+        {
+            writeln!(buf, "\r{}", red.value(data))
+        } else {
+            writeln!(buf, "\r{}", green.value(data))
+        }
+    })
+    .init();
 
     let server = HttpServer::new(move || {
         let compress = if var("COMPRESS").unwrap_or("false".to_string()) == "true" {
