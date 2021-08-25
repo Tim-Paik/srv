@@ -1,7 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
- 
+
 #[macro_use]
 extern crate clap;
 #[macro_use]
@@ -599,83 +599,81 @@ async fn main() -> std::io::Result<()> {
         addr
     };
 
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info"),
-    )
-    .format(|buf, record| {
-        let data = record.args().to_string();
-        let mut style = buf.style();
-        let blue = style.set_color(Color::Rgb(52, 152, 219));
-        let mut style = buf.style();
-        let red = style.set_color(Color::Rgb(231, 76, 60));
-        let mut style = buf.style();
-        let green = style.set_color(Color::Rgb(76, 175, 80));
-        if record.target() == "actix_web::middleware::logger" {
-            let data: Vec<&str> = data.splitn(5, "^").collect();
-            let time = blue.value(
-                chrono::NaiveDateTime::from_str(data[0])
-                    .unwrap()
-                    .format("%Y/%m/%d %H:%M:%S")
-                    .to_string(),
-            );
-            let ipaddr = blue.value(data[1]);
-            let status_code = data[2].parse().unwrap_or(500);
-            let status_code = if status_code < 400 {
-                green.value(status_code)
-            } else {
-                red.value(status_code)
-            };
-            let process_time: Vec<&str> = data[3].splitn(2, ".").collect();
-            let process_time = process_time[0].to_string() + "ms";
-            let process_time = blue.value(if process_time.len() == 3 {
-                "  ".to_string() + &process_time
-            } else if process_time.len() == 4 {
-                " ".to_string() + &process_time
-            } else {
-                process_time
-            });
-            let content = blue.value(data[4]);
-            return writeln!(
-                buf,
-                "[{}] {} | {} | {} | {}",
-                time, ipaddr, status_code, process_time, content
-            );
-        } else if record.target() == "actix_server::builder" {
-            if data.starts_with("SIGINT received, exiting") {
-                return writeln!(buf, "\r{}", green.value("[INFO] SIGINT received, exiting"));
-                // Add '\r' to remove the input ^C
-            } else {
-                let data = data.replace("actix-web-service-", "");
-                let re1 = regex::Regex::new("Starting (.*) workers").unwrap();
-                if re1.is_match(&data) {
-                    return Ok(());
-                }
-                let re2 = regex::Regex::new("Starting \"(.*)\" service on (.*)").unwrap();
-                if re2.is_match(&data) {
-                    let addr = re2
-                        .captures(&data)
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(|buf, record| {
+            let data = record.args().to_string();
+            let mut style = buf.style();
+            let blue = style.set_color(Color::Rgb(52, 152, 219));
+            let mut style = buf.style();
+            let red = style.set_color(Color::Rgb(231, 76, 60));
+            let mut style = buf.style();
+            let green = style.set_color(Color::Rgb(76, 175, 80));
+            if record.target() == "actix_web::middleware::logger" {
+                let data: Vec<&str> = data.splitn(5, "^").collect();
+                let time = blue.value(
+                    chrono::NaiveDateTime::from_str(data[0])
                         .unwrap()
-                        .get(1)
-                        .map_or("", |m| m.as_str());
-                    let data = format!(
-                        "[INFO] Serving {} on {}",
-                        var("ROOT").unwrap_or(".".to_string()),
-                        addr
-                    );
-                    return writeln!(buf, "\r{}", green.value(data));
+                        .format("%Y/%m/%d %H:%M:%S")
+                        .to_string(),
+                );
+                let ipaddr = blue.value(data[1]);
+                let status_code = data[2].parse().unwrap_or(500);
+                let status_code = if status_code < 400 {
+                    green.value(status_code)
+                } else {
+                    red.value(status_code)
+                };
+                let process_time: Vec<&str> = data[3].splitn(2, ".").collect();
+                let process_time = process_time[0].to_string() + "ms";
+                let process_time = blue.value(if process_time.len() == 3 {
+                    "  ".to_string() + &process_time
+                } else if process_time.len() == 4 {
+                    " ".to_string() + &process_time
+                } else {
+                    process_time
+                });
+                let content = blue.value(data[4]);
+                return writeln!(
+                    buf,
+                    "[{}] {} | {} | {} | {}",
+                    time, ipaddr, status_code, process_time, content
+                );
+            } else if record.target() == "actix_server::builder" {
+                if data.starts_with("SIGINT received, exiting") {
+                    return writeln!(buf, "\r{}", green.value("[INFO] SIGINT received, exiting"));
+                    // Add '\r' to remove the input ^C
+                } else {
+                    let data = data.replace("actix-web-service-", "");
+                    let re1 = regex::Regex::new("Starting (.*) workers").unwrap();
+                    if re1.is_match(&data) {
+                        return Ok(());
+                    }
+                    let re2 = regex::Regex::new("Starting \"(.*)\" service on (.*)").unwrap();
+                    if re2.is_match(&data) {
+                        let addr = re2
+                            .captures(&data)
+                            .unwrap()
+                            .get(1)
+                            .map_or("", |m| m.as_str());
+                        let data = format!(
+                            "[INFO] Serving {} on {}",
+                            var("ROOT").unwrap_or(".".to_string()),
+                            addr
+                        );
+                        return writeln!(buf, "\r{}", green.value(data));
+                    }
                 }
             }
-        }
-        if data.starts_with("[ERROR]")
-            || data.starts_with("TLS alert")
-            || data.starts_with("Failed")
-        {
-            writeln!(buf, "\r{}", red.value(data))
-        } else {
-            writeln!(buf, "\r{}", green.value(data))
-        }
-    })
-    .init();
+            if data.starts_with("[ERROR]")
+                || data.starts_with("TLS alert")
+                || data.starts_with("Failed")
+            {
+                writeln!(buf, "\r{}", red.value(data))
+            } else {
+                writeln!(buf, "\r{}", green.value(data))
+            }
+        })
+        .init();
 
     let server = HttpServer::new(move || {
         let compress = if var("COMPRESS").unwrap_or("false".to_string()) == "true" {
@@ -684,11 +682,6 @@ async fn main() -> std::io::Result<()> {
             http::header::ContentEncoding::Identity
         };
         let app = App::new()
-            .wrap(middleware::Compress::new(compress))
-            .wrap(middleware::Condition::new(
-                var("ENABLE_AUTH").unwrap_or("false".to_string()) == "true",
-                actix_web_httpauth::middleware::HttpAuthentication::basic(validator),
-            ))
             .wrap_fn(|req, srv| {
                 let paths = PathBuf::from_str(req.path()).unwrap_or(PathBuf::default());
                 let mut isdotfile = false;
@@ -699,7 +692,7 @@ async fn main() -> std::io::Result<()> {
                 }
                 let fut = srv.call(req);
                 async move {
-                    Ok(fut.await?.map_body(|head, mut body| {
+                    Ok(fut.await?.map_body(|head, body| {
                         if var("NOCACHE").unwrap_or("false".to_string()) == "true" {
                             head.headers_mut().insert(
                                 http::header::CACHE_CONTROL,
@@ -717,13 +710,17 @@ async fn main() -> std::io::Result<()> {
                         {
                             head.status = http::StatusCode::FORBIDDEN;
                             *head.headers_mut() = http::HeaderMap::new();
-                            let _ = body.take_body();
-                            head.set_connection_type(http::ConnectionType::Close);
+                            return dev::ResponseBody::Other(actix_web::body::Body::None);
                         }
                         body
                     }))
                 }
             })
+            .wrap(middleware::Compress::new(compress))
+            .wrap(middleware::Condition::new(
+                var("ENABLE_AUTH").unwrap_or("false".to_string()) == "true",
+                actix_web_httpauth::middleware::HttpAuthentication::basic(validator),
+            ))
             .wrap(middleware::Logger::new("%t^%a^%s^%D^%r"));
         let files = fs::Files::new("/", var("ROOT").unwrap_or(".".to_string()))
             .use_hidden_files()
