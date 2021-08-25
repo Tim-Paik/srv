@@ -1885,6 +1885,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
+name = "srv"
+version = "1.0.0-rc"
+dependencies = [
+ "actix-files",
+ "actix-http",
+ "actix-web",
+ "actix-web-httpauth",
+ "chrono",
+ "clap",
+ "env_logger",
+ "lazy_static",
+ "log",
+ "mime_guess",
+ "regex",
+ "rustls",
+ "serde",
+ "sha2",
+ "tera",
+ "toml",
+]
+
+[[package]]
 name = "standback"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2485,28 +2507,6 @@ name = "wasm-bindgen-shared"
 version = "0.2.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "acdb075a845574a1fa5f09fd77e43f7747599301ea3417a9fbffdeedfc1f4a29"
-
-[[package]]
-name = "web"
-version = "1.0.0-rc"
-dependencies = [
- "actix-files",
- "actix-http",
- "actix-web",
- "actix-web-httpauth",
- "chrono",
- "clap",
- "env_logger",
- "lazy_static",
- "log",
- "mime_guess",
- "regex",
- "rustls",
- "serde",
- "sha2",
- "tera",
- "toml",
-]
 
 [[package]]
 name = "web-sys"

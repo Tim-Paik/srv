@@ -2,7 +2,7 @@
 authors = ["Tim_Paik <timpaikc@outlook.com>"]
 description = "simple http server written in rust"
 edition = "2018"
-name = "web"
+name = "srv"
 version = "1.0.0-rc"
 
 [dependencies]
