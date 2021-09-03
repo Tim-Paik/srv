@@ -180,9 +180,9 @@ struct File {
 }
 
 #[derive(serde::Serialize)]
-struct IndexContext<'r> {
-    title: &'r str,
-    paths: Vec<&'r str>,
+struct IndexContext {
+    title: String,
+    paths: Vec<String>,
     dirs: Vec<Dir>,
     files: Vec<File>,
 }
@@ -211,7 +211,7 @@ fn render_index(
     }
     let show_dot_files = var("DOTFILES").unwrap_or("false".to_string()) == "true";
     let mut context = IndexContext {
-        title: "",
+        title: "".to_string(),
         paths: vec![],
         dirs: vec![],
         files: vec![],
@@ -220,6 +220,9 @@ fn render_index(
         if path == "" {
             continue;
         }
+        let path =
+            urlencoding::decode(path).unwrap_or(std::borrow::Cow::Borrowed("[Parse URL Error]"));
+        let path = path.into_owned();
         context.paths.push(path);
     }
     match read_dir(&dir.path) {
@@ -276,7 +279,7 @@ fn render_index(
             }
         }
     }
-    context.title = context.paths.last().unwrap_or(&"/");
+    context.title = context.paths.last().unwrap_or(&"/".to_string()).to_string();
     context.dirs.sort();
     context.files.sort();
     let content = tera::Context::from_serialize(&context);
@@ -632,7 +635,11 @@ async fn main() -> std::io::Result<()> {
                 } else {
                     process_time
                 });
-                let content = blue.value(data[4]);
+                let content = blue.value(
+                    urlencoding::decode(data[4])
+                        .unwrap_or(std::borrow::Cow::Borrowed("[Parse URL Error]"))
+                        .into_owned(),
+                );
                 return writeln!(
                     buf,
                     "[{}] {} | {} | {} | {}",

@@ -22,6 +22,7 @@ serde = "1"
 sha2 = "0.9"
 tera = "1"
 toml = "0.5"
+urlencoding = "2.1"
 
 [profile.release]
 lto = true
