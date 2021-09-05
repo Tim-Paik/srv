@@ -33,3 +33,66 @@ This is a simple HTTP Server for use in a development environment, inspired by [
 - TLS/SSL support, HTTP/2 support
 - One click to enable CORS, custom CORS header support
 - cargo doc support
+
+## Install
+
+### Pre-compiled Version
+
+#### Linux
+
+##### Archlinux
+
+```shell
+yay -S srv-bin
+```
+
+##### Other Linux
+
+Download the pre-compiled `srv-x86_64-unknown-linux-musl.tar.gz` on the [releases](https://github.com/Tim-Paik/srv/releases/latest), and copy the srv file in the compressed package to `/usr/bin` as a ROOT user with 755 permissions.
+
+```shell
+wget https://github.com/Tim-Paik/srv/releases/download/v1.0.0-rc.6/srv-x86_64-unknown-linux-musl.tar.gz
+tar -xzvf srv-x86_64-unknown-linux-musl.tar.gz
+install -Dm0755 -t /usr/bin/ srv
+rm srv srv-x86_64-unknown-linux-musl.tar.gz
+```
+for reference only
+
+#### MacOS
+
+I'm sorry I don't have the corresponding equipment, but I can only provide `srv-x86_64-apple-darwin.tar.gz` (Of course, if someone can sponsor me a Mac I would be very grateful)
+
+#### Windows
+
+Download the pre-compiled `srv-x86_64-pc-windows-msvc.zip` in the [releases](https://github.com/Tim-Paik/srv/releases/latest), unzip the srv.exe and copy it to your `%PATH%` (if you don’t know what this is, move `srv.exe` to `%SystemRoot%\System32`)
+
+### Compile and Install
+
+You Need:
+
+ - Rust & Cargo Installation
+ - Git Installation
+ - Gcc/Msvc Toolchain Installation
+
+```shell
+git clone git@github.com:Tim-Paik/srv.git
+cd srv
+cargo build --release
+strip target/release/srv
+```
+
+Then you can find the compiled executable file named `srv` in the `target/release/` folder.
+
+## Usage
+
+Execute `srv --help` to get all the usage methods
+
+Waiting to be added...
+
+## License
+
+```text
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+```

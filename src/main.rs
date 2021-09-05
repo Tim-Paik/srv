@@ -203,13 +203,13 @@ fn render_index(
         };
         return Ok(ServiceResponse::new(req.clone(), res));
     }
-    if var("NOINDEX").unwrap_or("false".to_string()) == "true" {
+    if var("NOINDEX").unwrap_or_else(|_| "false".to_string()) == "true" {
         return Ok(ServiceResponse::new(
             req.clone(),
             HttpResponse::NotFound().body(""),
         ));
     }
-    let show_dot_files = var("DOTFILES").unwrap_or("false".to_string()) == "true";
+    let show_dot_files = var("DOTFILES").unwrap_or_else(|_| "false".to_string()) == "true";
     let mut context = IndexContext {
         title: "".to_string(),
         paths: vec![],
@@ -217,7 +217,7 @@ fn render_index(
         files: vec![],
     };
     for path in req.path().split('/') {
-        if path == "" {
+        if path.is_empty() {
             continue;
         }
         let path =
@@ -245,7 +245,7 @@ fn render_index(
                         continue;
                     }
                 };
-                if !show_dot_files && name.starts_with(".") {
+                if !show_dot_files && name.starts_with('.') {
                     continue;
                 }
                 let metadata = match path.metadata() {
@@ -292,7 +292,7 @@ fn render_index(
     };
     let index = TEMPLATE
         .render("index", &content)
-        .unwrap_or("TEMPLATE RENDER ERROR".to_string());
+        .unwrap_or_else(|_| "TEMPLATE RENDER ERROR".to_string());
     let res = HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .body(index);
@@ -305,7 +305,7 @@ fn display_path(path: &Path) -> String {
     if root.starts_with("\\\\?\\") {
         root[4..root.len()].to_string()
     } else {
-        root.to_string()
+        root
     }
 }
 
@@ -321,9 +321,14 @@ async fn validator(
     req: dev::ServiceRequest,
     auth: actix_web_httpauth::extractors::basic::BasicAuth,
 ) -> Result<dev::ServiceRequest, actix_web::Error> {
-    if auth.user_id() == var("AUTH_USERNAME").unwrap_or("".to_string()).as_str()
+    if auth.user_id()
+        == var("AUTH_USERNAME")
+            .unwrap_or_else(|_| "".to_string())
+            .as_str()
         && hash(auth.password().unwrap_or(&std::borrow::Cow::from("")))
-            == var("AUTH_PASSWORD").unwrap_or("".to_string()).as_str()
+            == var("AUTH_PASSWORD")
+                .unwrap_or_else(|_| "".to_string())
+                .as_str()
     {
         return Ok(req);
     }
@@ -365,7 +370,7 @@ async fn main() -> std::io::Result<()> {
             }
         } "Root directory")
         (@arg address: -a --address +takes_value default_value["0.0.0.0"] {
-            |s| match IpAddr::from_str(&s) {
+            |s| match IpAddr::from_str(s) {
                 Ok(_) => Ok(()),
                 Err(e) => Err(e.to_string()),
             }
@@ -419,7 +424,7 @@ async fn main() -> std::io::Result<()> {
             (@arg log: --log "Enable access log output [default: false]")
             (@arg quietall: --quietall "Disable all output")
             (@arg address: -a --address +takes_value default_value["0.0.0.0"] {
-                |s| match IpAddr::from_str(&s) {
+                |s| match IpAddr::from_str(s) {
                     Ok(_) => Ok(()),
                     Err(e) => Err(e.to_string()),
                 }
@@ -455,14 +460,11 @@ async fn main() -> std::io::Result<()> {
         set_var("RUST_LOG_STYLE", "never");
     }
 
-    match matches.value_of("auth") {
-        Some(s) => {
-            set_var("ENABLE_AUTH", matches.is_present("auth").to_string());
-            let parts = s.splitn(2, ':').collect::<Vec<&str>>();
-            set_var("AUTH_USERNAME", parts[0]);
-            set_var("AUTH_PASSWORD", hash(parts[1]));
-        }
-        None => {}
+    if let Some(s) = matches.value_of("auth") {
+        set_var("ENABLE_AUTH", matches.is_present("auth").to_string());
+        let parts = s.splitn(2, ':').collect::<Vec<&str>>();
+        set_var("AUTH_USERNAME", parts[0]);
+        set_var("AUTH_PASSWORD", hash(parts[1]));
     }
 
     if matches.is_present("cors") {
@@ -612,7 +614,7 @@ async fn main() -> std::io::Result<()> {
             let mut style = buf.style();
             let green = style.set_color(Color::Rgb(76, 175, 80));
             if record.target() == "actix_web::middleware::logger" {
-                let data: Vec<&str> = data.splitn(5, "^").collect();
+                let data: Vec<&str> = data.splitn(5, '^').collect();
                 let time = blue.value(
                     chrono::NaiveDateTime::from_str(data[0])
                         .unwrap()
@@ -626,7 +628,7 @@ async fn main() -> std::io::Result<()> {
                 } else {
                     red.value(status_code)
                 };
-                let process_time: Vec<&str> = data[3].splitn(2, ".").collect();
+                let process_time: Vec<&str> = data[3].splitn(2, '.').collect();
                 let process_time = process_time[0].to_string() + "ms";
                 let process_time = blue.value(if process_time.len() == 3 {
                     "  ".to_string() + &process_time
@@ -664,7 +666,7 @@ async fn main() -> std::io::Result<()> {
                             .map_or("", |m| m.as_str());
                         let data = format!(
                             "[INFO] Serving {} on {}",
-                            var("ROOT").unwrap_or(".".to_string()),
+                            var("ROOT").unwrap_or_else(|_| ".".to_string()),
                             addr
                         );
                         return writeln!(buf, "\r{}", green.value(data));
@@ -683,14 +685,14 @@ async fn main() -> std::io::Result<()> {
         .init();
 
     let server = HttpServer::new(move || {
-        let compress = if var("COMPRESS").unwrap_or("false".to_string()) == "true" {
+        let compress = if var("COMPRESS").unwrap_or_else(|_| "false".to_string()) == "true" {
             http::header::ContentEncoding::Auto
         } else {
             http::header::ContentEncoding::Identity
         };
         let app = App::new()
             .wrap_fn(|req, srv| {
-                let paths = PathBuf::from_str(req.path()).unwrap_or(PathBuf::default());
+                let paths = PathBuf::from_str(req.path()).unwrap_or_default();
                 let mut isdotfile = false;
                 for path in paths.iter() {
                     if path.to_string_lossy().starts_with('.') {
@@ -700,20 +702,21 @@ async fn main() -> std::io::Result<()> {
                 let fut = srv.call(req);
                 async move {
                     Ok(fut.await?.map_body(|head, body| {
-                        if var("NOCACHE").unwrap_or("false".to_string()) == "true" {
+                        if var("NOCACHE").unwrap_or_else(|_| "false".to_string()) == "true" {
                             head.headers_mut().insert(
                                 http::header::CACHE_CONTROL,
                                 http::HeaderValue::from_static("no-store"),
                             );
                         }
-                        if var("ENABLE_CORS").unwrap_or("false".to_string()) == "true" {
-                            let cors = var("CORS").unwrap_or("*".to_string());
+                        if var("ENABLE_CORS").unwrap_or_else(|_| "false".to_string()) == "true" {
+                            let cors = var("CORS").unwrap_or_else(|_| "*".to_string());
                             let cors = http::HeaderValue::from_str(&cors)
-                                .unwrap_or(http::HeaderValue::from_static("*"));
+                                .unwrap_or_else(|_| http::HeaderValue::from_static("*"));
                             head.headers_mut()
                                 .insert(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, cors);
                         }
-                        if isdotfile && !(var("DOTFILES").unwrap_or("false".to_string()) == "true")
+                        if isdotfile
+                            && var("DOTFILES").unwrap_or_else(|_| "false".to_string()) != "true"
                         {
                             head.status = http::StatusCode::FORBIDDEN;
                             *head.headers_mut() = http::HeaderMap::new();
@@ -725,11 +728,11 @@ async fn main() -> std::io::Result<()> {
             })
             .wrap(middleware::Compress::new(compress))
             .wrap(middleware::Condition::new(
-                var("ENABLE_AUTH").unwrap_or("false".to_string()) == "true",
+                var("ENABLE_AUTH").unwrap_or_else(|_| "false".to_string()) == "true",
                 actix_web_httpauth::middleware::HttpAuthentication::basic(validator),
             ))
             .wrap(middleware::Logger::new("%t^%a^%s^%D^%r"));
-        let files = fs::Files::new("/", var("ROOT").unwrap_or(".".to_string()))
+        let files = fs::Files::new("/", var("ROOT").unwrap_or_else(|_| ".".to_string()))
             .use_hidden_files()
             .prefer_utf8(true)
             .show_files_listing()
@@ -737,23 +740,23 @@ async fn main() -> std::io::Result<()> {
             .default_handler(|req: dev::ServiceRequest| {
                 let (http_req, _payload) = req.into_parts();
                 async {
-                    let path = var("ROOT").unwrap_or(".".to_string());
+                    let path = var("ROOT").unwrap_or_else(|_| ".".to_string());
                     let mut path = Path::new(&path).to_path_buf();
                     path.push("index.html");
                     if path.exists()
                         && path.is_file()
-                        && var("SPA").unwrap_or("false".to_string()) == "true"
+                        && var("SPA").unwrap_or_else(|_| "false".to_string()) == "true"
                     {
                         let res = fs::NamedFile::open(path)?.into_response(&http_req)?;
                         return Ok(ServiceResponse::new(http_req, res));
                     }
-                    return Ok(ServiceResponse::new(
+                    Ok(ServiceResponse::new(
                         http_req,
                         HttpResponse::NotFound().body(""),
-                    ));
+                    ))
                 }
             });
-        return app.service(files);
+        app.service(files)
     });
     let server = if enable_tls {
         let cert = &mut BufReader::new(
