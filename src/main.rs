@@ -12,6 +12,7 @@ use actix_web::{
     dev::{self, Service, ServiceResponse},
     http, middleware, App, HttpResponse, HttpServer,
 };
+use clap::Arg;
 use env_logger::fmt::Color;
 use log::{error, info};
 use sha2::Digest;
@@ -342,102 +343,74 @@ async fn validator(
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let matches = clap_app!((crate_name!()) =>
-        (version: crate_version!())
-        (author: crate_authors!())
-        (about: crate_description!())
-        (@arg noindex: --noindex "Disable automatic index page generation")
-        (@arg compress: -c --compress "Enable streaming compression (Content-length/segment download will be disabled)")
-        // (@arg upload: -u --upload "Enable file upload")
-        (@arg nocache: --nocache "Disable HTTP cache")
-        (@arg nocolor: --nocolor "Disable cli colors")
-        (@arg cors: --cors [VALUE] min_values(0) max_values(1) "Enable CORS")
-        (@arg spa: --spa "Enable Single-Page Application mode (always serve /index.html when the file is not found)")
-        (@arg dotfiles: -d --dotfiles "Show dotfiles")
-        (@arg open: -o --open "Open the page in the default browser")
-        (@arg quiet: -q --quiet "Disable access log output")
-        (@arg quietall: --quietall "Disable all output")
-        (@arg ROOT: default_value["."] {
-            |path| match std::fs::metadata(path) {
-                Ok(meta) => {
-                    if meta.is_dir() {
-                        Ok(())
-                    } else {
-                        Err("Parameter is not a directory".to_owned())
-                    }
-                }
-                Err(e) => Err(e.to_string()),
+    let check_does_dir_exits = |path: &str| match std::fs::metadata(path) {
+        Ok(meta) => {
+            if meta.is_dir() {
+                Ok(())
+            } else {
+                Err("Parameter is not a directory".to_owned())
             }
-        } "Root directory")
-        (@arg address: -a --address +takes_value default_value["0.0.0.0"] {
-            |s| match IpAddr::from_str(s) {
-                Ok(_) => Ok(()),
-                Err(e) => Err(e.to_string()),
+        }
+        Err(e) => Err(e.to_string()),
+    };
+    let check_does_file_exits = |path: &str| match std::fs::metadata(path) {
+        Ok(metadata) => {
+            if metadata.is_file() {
+                Ok(())
+            } else {
+                Err("Parameter is not a file".to_owned())
             }
-        } "IP address to serve on")
-        (@arg port: -p --port +takes_value default_value["8000"] {
-            |s| match s.parse::<u16>() {
-                Ok(_) => Ok(()),
-                Err(e) => Err(e.to_string()),
-            }
-        } "Port to serve on")
-        (@arg auth: --auth +takes_value {
-            |s| {
-                let parts = s.splitn(2, ':').collect::<Vec<&str>>();
-                if parts.len() < 2 || parts.len() >= 2 && parts[1].is_empty() {
-                    Err("Password not found".to_owned())
-                } else if parts[0].is_empty() {
-                    Err("Username not found".to_owned())
-                } else {
-                    Ok(())
-                }
-            }
-        } "HTTP Auth (username:password)")
-        (@arg cert: --cert +takes_value {
-            |s| match std::fs::metadata(s) {
-                Ok(metadata) => {
-                    if metadata.is_file() {
-                        Ok(())
-                    } else {
-                        Err("Parameter is not a file".to_owned())
-                    }
-                }
-                Err(e) => Err(e.to_string()),
-            }
-        } "Path of TLS/SSL public key (certificate)")
-        (@arg key: --key +takes_value {
-            |s| match std::fs::metadata(s) {
-                Ok(metadata) => {
-                    if metadata.is_file() {
-                        Ok(())
-                    } else {
-                        Err("Parameter is not a file".to_owned())
-                    }
-                }
-                Err(e) => Err(e.to_string()),
-            }
-        } "Path of TLS/SSL private key")
-        (@subcommand doc =>
-            (about: "Open cargo doc via local server (Need cargo installation)")
-            (@arg nocolor: --nocolor "Disable cli colors")
-            (@arg noopen: -no --noopen "Do not open the page in the default browser")
-            (@arg log: --log "Enable access log output [default: false]")
-            (@arg quietall: --quietall "Disable all output")
-            (@arg address: -a --address +takes_value default_value["0.0.0.0"] {
-                |s| match IpAddr::from_str(s) {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(e.to_string()),
-                }
-            } "IP address to serve on")
-            (@arg port: -p --port +takes_value default_value["8000"] {
-                |s| match s.parse::<u16>() {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(e.to_string()),
-                }
-            } "Port to serve on")
+        }
+        Err(e) => Err(e.to_string()),
+    };
+    let check_is_ip_addr = |s: &str| match IpAddr::from_str(s) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    };
+    let check_is_port_num = |s: &str| match s.parse::<u16>() {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    };
+    let check_is_auth = |s: &str| {
+        let parts = s.splitn(2, ':').collect::<Vec<&str>>();
+        if parts.len() < 2 || parts.len() >= 2 && parts[1].is_empty() {
+            Err("Password not found".to_owned())
+        } else if parts[0].is_empty() {
+            Err("Username not found".to_owned())
+        } else {
+            Ok(())
+        }
+    };
+    let matches = clap::App::new(crate_name!())
+        .version(crate_version!())
+        .author(crate_authors!())
+        .about(crate_description!())
+        .arg(Arg::new("noindex").long("noindex").about("Disable automatic index page generation"))
+        .arg(Arg::new("compress").short('c').long("compress").about("Enable streaming compression (Content-length/segment download will be disabled)"))
+        .arg(Arg::new("nocache").long("nocache").about("Disable HTTP cache"))
+        .arg(Arg::new("nocolor").long("nocolor").about("Disable cli colors"))
+        .arg(Arg::new("cors").long("cors").takes_value(true).min_values(0).max_values(1).about("Enable CORS [with custom value]"))
+        .arg(Arg::new("spa").long("spa").about("Enable Single-Page Application mode (always serve /index.html when the file is not found)"))
+        .arg(Arg::new("dotfiles").short('d').long("dotfiles").about("Show dotfiles"))
+        .arg(Arg::new("open").short('o').long("open").about("Open the page in the default browser"))
+        .arg(Arg::new("quiet").short('q').long("quiet").about("Disable access log output"))
+        .arg(Arg::new("quietall").long("quietall").about("Disable all output"))
+        .arg(Arg::new("ROOT").default_value(".").validator(check_does_dir_exits).about("Root directory"))
+        .arg(Arg::new("address").short('a').long("address").default_value("0.0.0.0").takes_value(true).validator(check_is_ip_addr).about("IP address to serve on"))
+        .arg(Arg::new("port").short('p').long("port").default_value("8000").takes_value(true).validator(check_is_port_num).about("Port to serve on"))
+        .arg(Arg::new("auth").long("auth").takes_value(true).validator(check_is_auth).about("HTTP Auth (username:password)"))
+        .arg(Arg::new("cert").long("cert").takes_value(true).validator(check_does_file_exits).about("Path of TLS/SSL public key (certificate)"))
+        .arg(Arg::new("key").long("key").takes_value(true).validator(check_does_file_exits).about("Path of TLS/SSL private key"))
+        .subcommand(clap::App::new("doc")
+            .about("Open cargo doc via local server (Need cargo installation)")
+            .arg(Arg::new("nocolor").long("nocolor").about("Disable cli colors"))
+            .arg(Arg::new("noopen").long("noopen").about("Do not open the page in the default browser"))
+            .arg(Arg::new("log").long("log").about("Enable access log output [default: disabled]"))
+            .arg(Arg::new("quietall").long("quietall").about("Disable all output"))
+            .arg(Arg::new("address").short('a').long("address").default_value("0.0.0.0").takes_value(true).validator(check_is_ip_addr).about("IP address to serve on"))
+            .arg(Arg::new("port").short('p').long("port").default_value("8000").takes_value(true).validator(check_is_port_num).about("Port to serve on"))
         )
-    )
-    .get_matches();
+        .get_matches();
 
     set_var(
         "ROOT",
@@ -608,11 +581,11 @@ async fn main() -> std::io::Result<()> {
         .format(|buf, record| {
             let data = record.args().to_string();
             let mut style = buf.style();
-            let blue = style.set_color(Color::Rgb(52, 152, 219));
+            let blue = style.set_color(Color::Cyan);
             let mut style = buf.style();
-            let red = style.set_color(Color::Rgb(231, 76, 60));
+            let red = style.set_color(Color::Red);
             let mut style = buf.style();
-            let green = style.set_color(Color::Rgb(76, 175, 80));
+            let green = style.set_color(Color::Green);
             if record.target() == "actix_web::middleware::logger" {
                 let data: Vec<&str> = data.splitn(5, '^').collect();
                 let time = blue.value(
