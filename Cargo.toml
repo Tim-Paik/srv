@@ -11,7 +11,7 @@ actix-http = "2.2"
 actix-web = {version = "3.3", features = ["rustls"]}
 actix-web-httpauth = "0.5"
 chrono = "0.4"
-clap = {version = "3.0.0-beta.5", features = ["wrap_help", "color"]}
+clap = {version = "3.0.0", features = ["wrap_help", "color", "cargo"]}
 env_logger = "0.9"
 lazy_static = "1.4"
 log = "0.4"
