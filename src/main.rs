@@ -412,7 +412,6 @@ async fn main() -> std::io::Result<()> {
     set_var("SPA", matches.is_present("spa").to_string());
     set_var("DOTFILES", matches.is_present("dotfiles").to_string());
     set_var("NOCACHE", matches.is_present("nocache").to_string());
-    set_var("COMPRESS", matches.is_present("compress").to_string());
 
     if matches.is_present("quiet") {
         set_var("RUST_LOG", "info,actix_web::middleware::logger=off");
@@ -448,11 +447,7 @@ async fn main() -> std::io::Result<()> {
         .value_of("address")
         .unwrap_or("127.0.0.1")
         .to_string();
-    let addr = format!(
-        "{}:{}",
-        ip,
-        matches.value_of("port").unwrap_or("8000")
-    );
+    let addr = format!("{}:{}", ip, matches.value_of("port").unwrap_or("8000"));
     let url = format!(
         "{}{}:{}",
         if enable_tls {
@@ -540,11 +535,7 @@ async fn main() -> std::io::Result<()> {
             .value_of("address")
             .unwrap_or("127.0.0.1")
             .to_string();
-        let addr = format!(
-            "{}:{}",
-            ip,
-            matches.value_of("port").unwrap_or("8000")
-        );
+        let addr = format!("{}:{}", ip, matches.value_of("port").unwrap_or("8000"));
         let url = format!(
             "http://{}:{}/{}/index.html",
             if ip == "0.0.0.0" { "127.0.0.1" } else { &ip },
@@ -568,8 +559,9 @@ async fn main() -> std::io::Result<()> {
         addr
     };
 
+    let addr_copy = addr.clone();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format(|buf, record| {
+        .format(move |buf, record| {
             let data = record.args().to_string();
             let mut style = buf.style();
             let blue = style.set_color(Color::Cyan);
@@ -580,7 +572,8 @@ async fn main() -> std::io::Result<()> {
             if record.target() == "actix_web::middleware::logger" {
                 let data: Vec<&str> = data.splitn(5, '^').collect();
                 let time = blue.value(
-                    chrono::NaiveDateTime::from_str(data[0])
+                    data[0]
+                        .parse::<chrono::DateTime<chrono::Utc>>()
                         .unwrap()
                         .format("%Y/%m/%d %H:%M:%S")
                         .to_string(),
@@ -612,30 +605,27 @@ async fn main() -> std::io::Result<()> {
                     time, ipaddr, status_code, process_time, content
                 );
             } else if record.target() == "actix_server::builder" {
-                if data.starts_with("SIGINT received, exiting") {
-                    return writeln!(buf, "\r{}", green.value("[INFO] SIGINT received, exiting"));
-                    // Add '\r' to remove the input ^C
-                } else {
-                    let data = data.replace("actix-web-service-", "");
-                    let re1 = regex::Regex::new("Starting (.*) workers").unwrap();
-                    if re1.is_match(&data) {
-                        return Ok(());
-                    }
-                    let re2 = regex::Regex::new("Starting \"(.*)\" service on (.*)").unwrap();
-                    if re2.is_match(&data) {
-                        let addr = re2
-                            .captures(&data)
-                            .unwrap()
-                            .get(1)
-                            .map_or("", |m| m.as_str());
-                        let data = format!(
-                            "[INFO] Serving {} on {}",
-                            var("ROOT").unwrap_or_else(|_| ".".to_string()),
-                            addr
-                        );
-                        return writeln!(buf, "\r{}", green.value(data));
-                    }
+                if data.starts_with("Starting ") && data.ends_with(" workers") {
+                    return Ok(());
                 }
+            } else if record.target() == "actix_server::server" {
+                if data == "Actix runtime found; starting in Actix runtime" {
+                    let data = format!(
+                        "[INFO] Serving {} on {}",
+                        var("ROOT").unwrap_or_else(|_| ".".to_string()),
+                        addr_copy
+                    );
+                    return writeln!(buf, "\r{}", green.value(data));
+                }
+                if data == "SIGINT received; starting forced shutdown" {
+                    return writeln!(buf, "\r{}", green.value("[INFO] SIGINT received; starting forced shutdown"));
+                    // Add '\r' to remove the input ^C
+                }
+                return Ok(());
+            } else if record.target() == "actix_server::worker"
+                || record.target() == "actix_server::accept"
+            {
+                return Ok(());
             }
             if data.starts_with("[ERROR]")
                 || data.starts_with("TLS alert")
@@ -722,8 +712,18 @@ async fn main() -> std::io::Result<()> {
         let key = &mut BufReader::new(
             std::fs::File::open(Path::new(matches.value_of("key").unwrap())).unwrap(),
         );
-        let cert = rustls_pemfile::certs(cert).unwrap().iter().map(|x| rustls::Certificate(x.to_vec())).collect::<Vec<_>>();
-        let key = rustls::PrivateKey(rustls_pemfile::pkcs8_private_keys(key).unwrap().first().expect("no private key found").to_owned());
+        let cert = rustls_pemfile::certs(cert)
+            .unwrap()
+            .iter()
+            .map(|x| rustls::Certificate(x.to_vec()))
+            .collect::<Vec<_>>();
+        let key = rustls::PrivateKey(
+            rustls_pemfile::pkcs8_private_keys(key)
+                .unwrap()
+                .first()
+                .expect("no private key found")
+                .to_owned(),
+        );
         let config = rustls::ServerConfig::builder()
             .with_safe_defaults()
             .with_no_client_auth()
