@@ -3,8 +3,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #[macro_use]
-extern crate clap;
-#[macro_use]
 extern crate lazy_static;
 
 use actix_files as fs;
@@ -15,6 +13,7 @@ use actix_web::{
 use clap::Arg;
 use env_logger::fmt::Color;
 use log::{error, info};
+use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::{
     env::{set_var, var},
@@ -156,23 +155,23 @@ fn get_file_type(from: &Path) -> String {
     .to_string()
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Deserialize)]
 struct Package {
     name: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Deserialize)]
 struct CargoToml {
     package: Package,
 }
 
-#[derive(Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
+#[derive(Eq, Ord, PartialEq, PartialOrd, Serialize)]
 struct Dir {
     name: String,
     modified: String,
 }
 
-#[derive(Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
+#[derive(Eq, Ord, PartialEq, PartialOrd, Serialize)]
 struct File {
     name: String,
     size: u64,
@@ -180,7 +179,7 @@ struct File {
     modified: String,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 struct IndexContext {
     title: String,
     paths: Vec<String>,
@@ -195,13 +194,9 @@ fn render_index(
     let mut index = dir.path.clone();
     index.push("index.html");
     if index.exists() && index.is_file() {
-        let res = match actix_files::NamedFile::open(index)?
+        let res = actix_files::NamedFile::open(index)?
             .set_content_type(mime_guess::mime::TEXT_HTML_UTF_8)
-            .into_response(req)
-        {
-            Ok(res) => res,
-            Err(e) => return Err(Error::new(ErrorKind::Other, e.to_string())),
-        };
+            .into_response(req);
         return Ok(ServiceResponse::new(req.clone(), res));
     }
     if var("NOINDEX").unwrap_or_else(|_| "false".to_string()) == "true" {
@@ -381,9 +376,8 @@ async fn main() -> std::io::Result<()> {
             Ok(())
         }
     };
-    let matches = app_from_crate!()
+    let matches = clap::command!()
         .arg(Arg::new("noindex").long("noindex").help("Disable automatic index page generation"))
-        .arg(Arg::new("compress").short('c').long("compress").help("Enable streaming compression (Content-length/segment download will be disabled)"))
         .arg(Arg::new("nocache").long("nocache").help("Disable HTTP cache"))
         .arg(Arg::new("nocolor").long("nocolor").help("Disable cli colors"))
         .arg(Arg::new("cors").long("cors").takes_value(true).min_values(0).max_values(1).help("Enable CORS [with custom value]"))
@@ -398,7 +392,7 @@ async fn main() -> std::io::Result<()> {
         .arg(Arg::new("auth").long("auth").takes_value(true).validator(check_is_auth).help("HTTP Auth (username:password)"))
         .arg(Arg::new("cert").long("cert").takes_value(true).validator(check_does_file_exits).help("Path of TLS/SSL public key (certificate)"))
         .arg(Arg::new("key").long("key").takes_value(true).validator(check_does_file_exits).help("Path of TLS/SSL private key"))
-        .subcommand(clap::App::new("doc")
+        .subcommand(clap::Command::new("doc")
             .about("Open cargo doc via local server (Need cargo installation)")
             .arg(Arg::new("nocolor").long("nocolor").help("Disable cli colors"))
             .arg(Arg::new("noopen").long("noopen").help("Do not open the page in the default browser"))
@@ -441,7 +435,7 @@ async fn main() -> std::io::Result<()> {
         set_var("ENABLE_CORS", matches.is_present("cors").to_string());
         match matches.value_of("cors") {
             Some(str) => {
-                set_var("CORS", str.to_string());
+                set_var("CORS", str);
             }
             None => {
                 set_var("CORS", "*");
@@ -457,7 +451,7 @@ async fn main() -> std::io::Result<()> {
     let addr = format!(
         "{}:{}",
         ip,
-        matches.value_of("port").unwrap_or("8000").to_string()
+        matches.value_of("port").unwrap_or("8000")
     );
     let url = format!(
         "{}{}:{}",
@@ -467,7 +461,7 @@ async fn main() -> std::io::Result<()> {
             "http://".to_string()
         },
         if ip == "0.0.0.0" { "127.0.0.1" } else { &ip },
-        matches.value_of("port").unwrap_or("8000").to_string()
+        matches.value_of("port").unwrap_or("8000")
     );
 
     let open_in_browser = |url: &str| {
@@ -549,12 +543,12 @@ async fn main() -> std::io::Result<()> {
         let addr = format!(
             "{}:{}",
             ip,
-            matches.value_of("port").unwrap_or("8000").to_string()
+            matches.value_of("port").unwrap_or("8000")
         );
         let url = format!(
             "http://{}:{}/{}/index.html",
             if ip == "0.0.0.0" { "127.0.0.1" } else { &ip },
-            matches.value_of("port").unwrap_or("8000").to_string(),
+            matches.value_of("port").unwrap_or("8000"),
             crate_name,
         );
         if !matches.is_present("noopen") {
@@ -655,11 +649,6 @@ async fn main() -> std::io::Result<()> {
         .init();
 
     let server = HttpServer::new(move || {
-        let compress = if var("COMPRESS").unwrap_or_else(|_| "false".to_string()) == "true" {
-            http::header::ContentEncoding::Auto
-        } else {
-            http::header::ContentEncoding::Identity
-        };
         let app = App::new()
             .wrap_fn(|req, srv| {
                 let paths = PathBuf::from_str(req.path()).unwrap_or_default();
@@ -675,28 +664,26 @@ async fn main() -> std::io::Result<()> {
                         if var("NOCACHE").unwrap_or_else(|_| "false".to_string()) == "true" {
                             head.headers_mut().insert(
                                 http::header::CACHE_CONTROL,
-                                http::HeaderValue::from_static("no-store"),
+                                http::header::HeaderValue::from_static("no-store"),
                             );
                         }
                         if var("ENABLE_CORS").unwrap_or_else(|_| "false".to_string()) == "true" {
                             let cors = var("CORS").unwrap_or_else(|_| "*".to_string());
-                            let cors = http::HeaderValue::from_str(&cors)
-                                .unwrap_or_else(|_| http::HeaderValue::from_static("*"));
+                            let cors = http::header::HeaderValue::from_str(&cors)
+                                .unwrap_or_else(|_| http::header::HeaderValue::from_static("*"));
                             head.headers_mut()
                                 .insert(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, cors);
                         }
                         if isdotfile
                             && var("DOTFILES").unwrap_or_else(|_| "false".to_string()) != "true"
                         {
-                            head.status = http::StatusCode::FORBIDDEN;
-                            *head.headers_mut() = http::HeaderMap::new();
-                            return dev::ResponseBody::Other(actix_web::body::Body::None);
+                            return dev::Response::new(http::StatusCode::FORBIDDEN).into_body();
                         }
                         body
                     }))
                 }
             })
-            .wrap(middleware::Compress::new(compress))
+            .wrap(middleware::Compress::default())
             .wrap(middleware::Condition::new(
                 var("ENABLE_AUTH").unwrap_or_else(|_| "false".to_string()) == "true",
                 actix_web_httpauth::middleware::HttpAuthentication::basic(validator),
@@ -717,7 +704,7 @@ async fn main() -> std::io::Result<()> {
                         && path.is_file()
                         && var("SPA").unwrap_or_else(|_| "false".to_string()) == "true"
                     {
-                        let res = fs::NamedFile::open(path)?.into_response(&http_req)?;
+                        let res = fs::NamedFile::open(path)?.into_response(&http_req);
                         return Ok(ServiceResponse::new(http_req, res));
                     }
                     Ok(ServiceResponse::new(
@@ -735,10 +722,13 @@ async fn main() -> std::io::Result<()> {
         let key = &mut BufReader::new(
             std::fs::File::open(Path::new(matches.value_of("key").unwrap())).unwrap(),
         );
-        let mut config = rustls::ServerConfig::new(rustls::NoClientAuth::new());
-        let cert_chain = rustls::internal::pemfile::certs(cert).unwrap();
-        let mut keys = rustls::internal::pemfile::pkcs8_private_keys(key).unwrap();
-        config.set_single_cert(cert_chain, keys.remove(0)).unwrap();
+        let cert = rustls_pemfile::certs(cert).unwrap().iter().map(|x| rustls::Certificate(x.to_vec())).collect::<Vec<_>>();
+        let key = rustls::PrivateKey(rustls_pemfile::pkcs8_private_keys(key).unwrap().first().expect("no private key found").to_owned());
+        let config = rustls::ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_single_cert(cert, key)
+            .expect("bad certificate/key");
         server.bind_rustls(addr, config)
     } else {
         server.bind(addr)
