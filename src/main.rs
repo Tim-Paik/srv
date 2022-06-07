@@ -197,11 +197,11 @@ fn render_index(
         let res = actix_files::NamedFile::open(index)?
             .set_content_type(mime_guess::mime::TEXT_HTML_UTF_8)
             .into_response(req);
-        return Ok(ServiceResponse::new(req.clone(), res));
+        return Ok(ServiceResponse::new(req.to_owned(), res));
     }
     if var("NOINDEX").unwrap_or_else(|_| "false".to_string()) == "true" {
         return Ok(ServiceResponse::new(
-            req.clone(),
+            req.to_owned(),
             HttpResponse::NotFound().body(""),
         ));
     }
@@ -292,7 +292,7 @@ fn render_index(
     let res = HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .body(index);
-    Ok(ServiceResponse::new(req.clone(), res))
+    Ok(ServiceResponse::new(req.to_owned(), res))
 }
 
 #[inline]
@@ -479,72 +479,8 @@ async fn main() -> std::io::Result<()> {
         open_in_browser(&url);
     }
 
-    let addr = if let Some(matches) = matches.subcommand_matches("doc") {
-        let mut cargo_toml = match std::fs::File::open("./Cargo.toml") {
-            Ok(file) => file,
-            Err(e) => {
-                error!("[ERROR] {}", e.to_string());
-                return Ok(());
-            }
-        };
-        let mut contents = String::new();
-        match cargo_toml.read_to_string(&mut contents) {
-            Ok(_) => {}
-            Err(e) => {
-                error!("[ERROR] {}", e.to_string());
-                return Ok(());
-            }
-        }
-        let contents: CargoToml = match toml::from_str(&contents) {
-            Ok(t) => t,
-            Err(e) => {
-                error!("[ERROR] {}", e.to_string());
-                return Ok(());
-            }
-        };
-        let crate_name = contents.package.name;
-        info!("[INFO] Generating document (may take a while)");
-        match std::process::Command::new("cargo").arg("doc").output() {
-            Ok(output) => {
-                let output = std::str::from_utf8(&output.stderr).unwrap_or("");
-                if output.starts_with("error: could not find `Cargo.toml` in") {
-                    error!("[ERROR] Cargo.toml Not Found");
-                    return Ok(());
-                } else if output.starts_with("error: ") {
-                    error!(
-                        "[ERROR] {}",
-                        output.strip_prefix("error: ").unwrap_or(output)
-                    );
-                    return Ok(());
-                }
-            }
-            Err(e) => {
-                error!("[ERROR] Cargo Error: {}", e.to_string());
-                return Ok(());
-            }
-        }
-        let path = Path::new("./target/doc/");
-        let mut index_path = path.to_path_buf();
-        index_path.push(crate_name.to_string() + "/index.html");
-        if !index_path.exists() || !index_path.is_file() {
-            error!("[ERROR] Cargo Error: doc path not found");
-            return Ok(());
-        }
-        set_var("ROOT", display_path(path));
-        let ip = matches
-            .value_of("address")
-            .unwrap_or("127.0.0.1")
-            .to_string();
-        let addr = format!("{}:{}", ip, matches.value_of("port").unwrap_or("8000"));
-        let url = format!(
-            "http://{}:{}/{}/index.html",
-            if ip == "0.0.0.0" { "127.0.0.1" } else { &ip },
-            matches.value_of("port").unwrap_or("8000"),
-            crate_name,
-        );
-        if !matches.is_present("noopen") {
-            open_in_browser(&url);
-        }
+
+    if let Some(matches) = matches.subcommand_matches("doc") {
         if !matches.is_present("log") {
             set_var("RUST_LOG", "info,actix_web::middleware::logger=off");
         }
@@ -554,12 +490,8 @@ async fn main() -> std::io::Result<()> {
         if matches.is_present("nocolor") {
             set_var("RUST_LOG_STYLE", "never");
         }
-        addr
-    } else {
-        addr
-    };
+    }
 
-    let addr_copy = addr.clone();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format(move |buf, record| {
             let data = record.args().to_string();
@@ -613,7 +545,7 @@ async fn main() -> std::io::Result<()> {
                     let data = format!(
                         "[INFO] Serving {} on {}",
                         var("ROOT").unwrap_or_else(|_| ".".to_string()),
-                        addr_copy
+                        var("LISTEN_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8000".to_string())
                     );
                     return writeln!(buf, "\r{}", green.value(data));
                 }
@@ -638,6 +570,78 @@ async fn main() -> std::io::Result<()> {
         })
         .init();
 
+        let addr = if let Some(matches) = matches.subcommand_matches("doc") {
+            let mut cargo_toml = match std::fs::File::open("./Cargo.toml") {
+                Ok(file) => file,
+                Err(e) => {
+                    error!("[ERROR] {}", e.to_string());
+                    return Ok(());
+                }
+            };
+            let mut contents = String::new();
+            match cargo_toml.read_to_string(&mut contents) {
+                Ok(_) => {}
+                Err(e) => {
+                    error!("[ERROR] {}", e.to_string());
+                    return Ok(());
+                }
+            }
+            let contents: CargoToml = match toml::from_str(&contents) {
+                Ok(t) => t,
+                Err(e) => {
+                    error!("[ERROR] {}", e.to_string());
+                    return Ok(());
+                }
+            };
+            let crate_name = contents.package.name;
+            info!("[INFO] Generating document (may take a while)");
+            match std::process::Command::new("cargo").arg("doc").output() {
+                Ok(output) => {
+                    let output = std::str::from_utf8(&output.stderr).unwrap_or("");
+                    if output.starts_with("error: could not find `Cargo.toml` in") {
+                        error!("[ERROR] Cargo.toml Not Found");
+                        return Ok(());
+                    } else if output.starts_with("error: ") {
+                        error!(
+                            "[ERROR] {}",
+                            output.strip_prefix("error: ").unwrap_or(output)
+                        );
+                        return Ok(());
+                    }
+                }
+                Err(e) => {
+                    error!("[ERROR] Cargo Error: {}", e.to_string());
+                    return Ok(());
+                }
+            }
+            let path = Path::new("./target/doc/");
+            let mut index_path = path.to_path_buf();
+            index_path.push(crate_name.to_string() + "/index.html");
+            if !index_path.exists() || !index_path.is_file() {
+                error!("[ERROR] Cargo Error: doc path not found");
+                return Ok(());
+            }
+            set_var("ROOT", display_path(path));
+            let ip = matches
+                .value_of("address")
+                .unwrap_or("127.0.0.1")
+                .to_string();
+            let addr = format!("{}:{}", ip, matches.value_of("port").unwrap_or("8000"));
+            let url = format!(
+                "http://{}:{}/{}/index.html",
+                if ip == "0.0.0.0" { "127.0.0.1" } else { &ip },
+                matches.value_of("port").unwrap_or("8000"),
+                crate_name,
+            );
+            if !matches.is_present("noopen") {
+                open_in_browser(&url);
+            }
+            addr
+        } else {
+            addr
+        };
+        set_var("LISTEN_ADDRESS", addr);
+    
     let server = HttpServer::new(move || {
         let app = App::new()
             .wrap_fn(|req, srv| {
@@ -729,9 +733,9 @@ async fn main() -> std::io::Result<()> {
             .with_no_client_auth()
             .with_single_cert(cert, key)
             .expect("bad certificate/key");
-        server.bind_rustls(addr, config)
+        server.bind_rustls(var("LISTEN_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8000".to_string()), config)
     } else {
-        server.bind(addr)
+        server.bind(var("LISTEN_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8000".to_string()))
     };
     server?.run().await
 }
