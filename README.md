@@ -7,7 +7,6 @@ This is a simple HTTP Server for use in a development environment, inspired by [
 
 ### Built With
 
-- ~~[rocket](https://github.com/SergioBenitez/Rocket)~~ Framework used in previous versions
 - [clap](https://github.com/clap-rs/clap) Provide command line parameter analysis
 - [tera](https://github.com/Keats/tera) Provide template support
 - [actix-web](https://github.com/actix/actix-web) Main frame
@@ -51,10 +50,10 @@ yay -S srv-bin
 Download the pre-compiled `srv-x86_64-unknown-linux-musl.tar.gz` on the [releases](https://github.com/Tim-Paik/srv/releases/latest), and copy the srv file in the compressed package to `/usr/bin` as a ROOT user with 755 permissions.
 
 ```shell
-wget https://github.com/Tim-Paik/srv/releases/download/v1.0.0-rc.6/srv-x86_64-unknown-linux-musl.tar.gz
-tar -xzvf srv-x86_64-unknown-linux-musl.tar.gz
+wget https://github.com/Tim-Paik/srv/releases/download/v1.0.1/srv-v1.0.1-x86_64-unknown-linux-musl.tar.gz
+tar -xzvf srv-v1.0.1-x86_64-unknown-linux-musl.tar.gz
 install -Dm0755 -t /usr/bin/ srv
-rm srv srv-x86_64-unknown-linux-musl.tar.gz
+rm srv srv-v1.0.1-x86_64-unknown-linux-musl.tar.gz
 ```
 for reference only
 
@@ -78,7 +77,6 @@ You Need:
 git clone git@github.com:Tim-Paik/srv.git
 cd srv
 cargo build --release
-strip target/release/srv
 ```
 
 Then you can find the compiled executable file named `srv` in the `target/release/` folder.
@@ -88,6 +86,10 @@ Then you can find the compiled executable file named `srv` in the `target/releas
 Execute `srv --help` to get all the usage methods
 
 Waiting to be added...
+
+## Contributing
+
+All contributions are welcome and I will reply as soon as I see it :)
 
 ## License
 
