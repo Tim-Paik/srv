@@ -1513,7 +1513,6 @@ name = "srv"
 version = "1.0.0-rc"
 dependencies = [
  "actix-files",
- "actix-http",
  "actix-web",
  "actix-web-httpauth",
  "chrono",
@@ -1522,7 +1521,6 @@ dependencies = [
  "lazy_static",
  "log",
  "mime_guess",
- "regex",
  "rustls",
  "rustls-pemfile",
  "serde",
