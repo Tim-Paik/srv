@@ -13,7 +13,6 @@ askama = "0.11"
 askama_actix = "0.13"
 clap = {version = "3.2", features = ["wrap_help", "color", "cargo"]}
 env_logger = "0.9"
-lazy_static = "1.4"
 log = "0.4"
 mime_guess = "2.0"
 rustls = "0.20"
