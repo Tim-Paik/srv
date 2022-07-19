@@ -8,7 +8,7 @@ This is a simple HTTP Server for use in a development environment, inspired by [
 ### Built With
 
 - [clap](https://github.com/clap-rs/clap) Provide command line parameter analysis
-- [tera](https://github.com/Keats/tera) Provide template support
+- [askama](https://github.com/djc/askama) Provide template support
 - [actix-web](https://github.com/actix/actix-web) Main frame
 - [actix-files](https://github.com/actix/actix-web/tree/master/actix-files) Provide static resources
 - [actix-web-httpauth](https://github.com/actix/actix-extras/tree/master/actix-web-httpauth) Provide authentication

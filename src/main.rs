@@ -2,158 +2,34 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-#[macro_use]
-extern crate lazy_static;
+mod filetype;
 
-use actix_files as fs;
 use actix_web::{
-    dev::{self, Service, ServiceResponse},
-    http, middleware, App, HttpResponse, HttpServer,
+    dev::{Response, Service, ServiceRequest, ServiceResponse},
+    http, middleware, App, HttpRequest, HttpResponse, HttpServer,
 };
+use actix_web_httpauth::{
+    extractors::{basic::BasicAuth, AuthenticationError},
+    headers::www_authenticate::basic::Basic,
+    middleware::HttpAuthentication,
+};
+use askama_actix::TemplateToResponse;
 use clap::Arg;
 use env_logger::fmt::Color;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::{
+    borrow::Cow,
     env::{set_var, var},
-    fs::read_dir,
-    io::{BufReader, Error, ErrorKind, Read, Write},
+    fs::{self, metadata, read_dir},
+    io::{self, BufReader, Read, Write},
     net::IpAddr,
     path::{Path, PathBuf},
+    process::Command,
     str::FromStr,
 };
-
-lazy_static! {
-    pub static ref TEMPLATE: tera::Tera = {
-        let mut tera = tera::Tera::default();
-        tera.add_raw_template("index", include_str!("../templates/index.html.tera"))
-            .unwrap();
-        tera
-    };
-}
-
-#[inline]
-fn get_file_type(from: &Path) -> String {
-    match from.extension() {
-        Some(os_str) => match os_str.to_str().unwrap_or("") {
-            "7z" => "archive",
-            "bz" => "archive",
-            "bz2" => "archive",
-            "cab" => "archive",
-            "gz" => "archive",
-            "iso" => "archive",
-            "rar" => "archive",
-            "xz" => "archive",
-            "zip" => "archive",
-            "zst" => "archive",
-            "zstd" => "archive",
-            "doc" => "word",
-            "docx" => "word",
-            "ppt" => "powerpoint",
-            "pptx" => "powerpoint",
-            "xls" => "excel",
-            "xlsx" => "excel",
-            "heic" => "image",
-            "pdf" => "pdf",
-            // JavaScript / TypeScript
-            "js" => "code",
-            "cjs" => "code",
-            "mjs" => "code",
-            "jsx" => "code",
-            "ts" => "code",
-            "tsx" => "code",
-            "json" => "code",
-            "coffee" => "code",
-            // HTML / CSS
-            "html" => "code",
-            "htm" => "code",
-            "xml" => "code",
-            "xhtml" => "code",
-            "vue" => "code",
-            "ejs" => "code",
-            "template" => "code",
-            "tmpl" => "code",
-            "pug" => "code",
-            "art" => "code",
-            "hbs" => "code",
-            "tera" => "code",
-            "css" => "code",
-            "scss" => "code",
-            "sass" => "code",
-            "less" => "code",
-            // Python
-            "py" => "code",
-            "pyc" => "code",
-            // JVM
-            "java" => "code",
-            "kt" => "code",
-            "kts" => "code",
-            "gradle" => "code",
-            "groovy" => "code",
-            "scala" => "code",
-            "jsp" => "code",
-            // Shell
-            "sh" => "code",
-            // Php
-            "php" => "code",
-            // C / C++
-            "c" => "code",
-            "cc" => "code",
-            "cpp" => "code",
-            "h" => "code",
-            "cmake" => "code",
-            // C#
-            "cs" => "code",
-            "xaml" => "code",
-            "sln" => "code",
-            "csproj" => "code",
-            // Golang
-            "go" => "code",
-            "mod" => "code",
-            "sum" => "code",
-            // Swift
-            "swift" => "code",
-            "plist" => "code",
-            "xib" => "code",
-            "xcconfig" => "code",
-            "entitlements" => "code",
-            "xcworkspacedata" => "code",
-            "pbxproj" => "code",
-            // Ruby
-            "rb" => "code",
-            // Rust
-            "rs" => "code",
-            // Objective-C
-            "m" => "code",
-            // Dart
-            "dart" => "code",
-            // Microsoft
-            "manifest" => "code",
-            "rc" => "code",
-            "cmd" => "code",
-            "bat" => "code",
-            "ps1" => "code",
-            // Config
-            "ini" => "code",
-            "yaml" => "code",
-            "toml" => "code",
-            "conf" => "code",
-            "properties" => "code",
-            "lock" => "alt",
-            _ => match mime_guess::from_path(from).first_or_octet_stream().type_() {
-                mime_guess::mime::AUDIO => "audio",
-                mime_guess::mime::IMAGE => "image",
-                mime_guess::mime::PDF => "pdf",
-                mime_guess::mime::VIDEO => "video",
-                mime_guess::mime::TEXT => "alt",
-                _ => "file",
-            },
-        },
-        None => "file",
-    }
-    .to_string()
-}
+use time::OffsetDateTime;
 
 #[derive(Deserialize)]
 struct Package {
@@ -179,6 +55,8 @@ struct File {
     modified: String,
 }
 
+#[derive(askama_actix::Template)]
+#[template(path = "index.html")]
 #[derive(Serialize)]
 struct IndexContext {
     title: String,
@@ -189,8 +67,8 @@ struct IndexContext {
 
 fn render_index(
     dir: &actix_files::Directory,
-    req: &actix_web::HttpRequest,
-) -> Result<ServiceResponse, std::io::Error> {
+    req: &HttpRequest,
+) -> Result<ServiceResponse, io::Error> {
     let mut index = dir.path.clone();
     index.push("index.html");
     if index.exists() && index.is_file() {
@@ -216,8 +94,7 @@ fn render_index(
         if path.is_empty() {
             continue;
         }
-        let path =
-            urlencoding::decode(path).unwrap_or(std::borrow::Cow::Borrowed("[Parse URL Error]"));
+        let path = urlencoding::decode(path).unwrap_or(Cow::Borrowed("[Parse URL Error]"));
         let path = path.into_owned();
         context.paths.push(path);
     }
@@ -252,7 +129,7 @@ fn render_index(
                     }
                 };
                 let modified = match metadata.modified() {
-                    Ok(time) => time::OffsetDateTime::from(time)
+                    Ok(time) => OffsetDateTime::from(time)
                         .format(time::macros::format_description!(
                             "[year]/[month]/[day] [hour]:[minute]:[second]"
                         ))
@@ -266,7 +143,7 @@ fn render_index(
                     context.dirs.push(Dir { name, modified });
                 } else if metadata.is_file() {
                     let size = metadata.len();
-                    let filetype = get_file_type(&path.path());
+                    let filetype = filetype::get_file_type(&path.path());
                     context.files.push(File {
                         name,
                         size,
@@ -280,21 +157,7 @@ fn render_index(
     context.title = context.paths.last().unwrap_or(&"/".to_string()).to_string();
     context.dirs.sort();
     context.files.sort();
-    let content = tera::Context::from_serialize(&context);
-    let content = match content {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            error!(target: "tera::Context::from_serialize", "[ERROR] Read modified time error: {}", e.to_string());
-            return Err(Error::new(ErrorKind::Other, e.to_string()));
-        }
-    };
-    let index = TEMPLATE
-        .render("index", &content)
-        .unwrap_or_else(|_| "TEMPLATE RENDER ERROR".to_string());
-    let res = HttpResponse::Ok()
-        .content_type("text/html; charset=utf-8")
-        .body(index);
-    Ok(ServiceResponse::new(req.to_owned(), res))
+    Ok(ServiceResponse::new(req.to_owned(), context.to_response()))
 }
 
 #[inline]
@@ -316,31 +179,27 @@ fn hash(from: &str) -> String {
 
 #[inline]
 async fn validator(
-    req: dev::ServiceRequest,
-    auth: actix_web_httpauth::extractors::basic::BasicAuth,
-) -> Result<dev::ServiceRequest, actix_web::Error> {
+    req: ServiceRequest,
+    auth: BasicAuth,
+) -> Result<ServiceRequest, (actix_web::Error, ServiceRequest)> {
     if auth.user_id()
         == var("AUTH_USERNAME")
             .unwrap_or_else(|_| "".to_string())
             .as_str()
-        && hash(auth.password().unwrap_or(&std::borrow::Cow::from("")))
+        && hash(auth.password().unwrap_or(&Cow::from("")))
             == var("AUTH_PASSWORD")
                 .unwrap_or_else(|_| "".to_string())
                 .as_str()
     {
         return Ok(req);
     }
-    let err = actix_web_httpauth::extractors::AuthenticationError::new(
-        actix_web_httpauth::headers::www_authenticate::basic::Basic::with_realm(
-            "Incorrect username or password",
-        ),
-    );
-    Err(actix_web::Error::from(err))
+    let err = AuthenticationError::new(Basic::with_realm("Incorrect username or password"));
+    Err((actix_web::Error::from(err), req))
 }
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    let check_does_dir_exits = |path: &str| match std::fs::metadata(path) {
+async fn main() -> io::Result<()> {
+    let check_does_dir_exits = |path: &str| match metadata(path) {
         Ok(meta) => {
             if meta.is_dir() {
                 Ok(())
@@ -350,7 +209,7 @@ async fn main() -> std::io::Result<()> {
         }
         Err(e) => Err(e.to_string()),
     };
-    let check_does_file_exits = |path: &str| match std::fs::metadata(path) {
+    let check_does_file_exits = |path: &str| match metadata(path) {
         Ok(metadata) => {
             if metadata.is_file() {
                 Ok(())
@@ -463,9 +322,9 @@ async fn main() -> std::io::Result<()> {
 
     let open_in_browser = |url: &str| {
         if cfg!(target_os = "windows") {
-            std::process::Command::new("explorer").arg(url).spawn().ok();
+            Command::new("explorer").arg(url).spawn().ok();
         } else if cfg!(target_os = "macos") {
-            std::process::Command::new("open").arg(url).spawn().ok();
+            Command::new("open").arg(url).spawn().ok();
         } else if cfg!(target_os = "linux")
             || cfg!(target_os = "android")
             || cfg!(target_os = "freebsd")
@@ -473,7 +332,7 @@ async fn main() -> std::io::Result<()> {
             || cfg!(target_os = "openbsd")
             || cfg!(target_os = "netbsd")
         {
-            std::process::Command::new("xdg-open").arg(url).spawn().ok();
+            Command::new("xdg-open").arg(url).spawn().ok();
         }
     };
 
@@ -505,15 +364,12 @@ async fn main() -> std::io::Result<()> {
             if record.target() == "actix_web::middleware::logger" {
                 let data: Vec<&str> = data.splitn(5, '^').collect();
                 let time = blue.value(
-                    time::OffsetDateTime::parse(
-                        data[0],
-                        &time::format_description::well_known::Rfc3339,
-                    )
-                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
-                    .format(time::macros::format_description!(
-                        "[year]/[month]/[day] [hour]:[minute]:[second]"
-                    ))
-                    .unwrap_or_else(|_| "".to_string()),
+                    OffsetDateTime::parse(data[0], &time::format_description::well_known::Rfc3339)
+                        .unwrap_or(OffsetDateTime::UNIX_EPOCH)
+                        .format(time::macros::format_description!(
+                            "[year]/[month]/[day] [hour]:[minute]:[second]"
+                        ))
+                        .unwrap_or_else(|_| "".to_string()),
                 );
                 let ipaddr = blue.value(data[1]);
                 let status_code = data[2].parse().unwrap_or(500);
@@ -533,7 +389,7 @@ async fn main() -> std::io::Result<()> {
                 });
                 let content = blue.value(
                     urlencoding::decode(data[4])
-                        .unwrap_or(std::borrow::Cow::Borrowed("[Parse URL Error]"))
+                        .unwrap_or(Cow::Borrowed("[Parse URL Error]"))
                         .into_owned(),
                 );
                 return writeln!(
@@ -580,7 +436,7 @@ async fn main() -> std::io::Result<()> {
         .init();
 
     let addr = if let Some(matches) = matches.subcommand_matches("doc") {
-        let mut cargo_toml = match std::fs::File::open("./Cargo.toml") {
+        let mut cargo_toml = match fs::File::open("./Cargo.toml") {
             Ok(file) => file,
             Err(e) => {
                 error!("[ERROR] {}", e.to_string());
@@ -604,7 +460,7 @@ async fn main() -> std::io::Result<()> {
         };
         let crate_name = contents.package.name;
         info!("[INFO] Generating document (may take a while)");
-        match std::process::Command::new("cargo").arg("doc").output() {
+        match Command::new("cargo").arg("doc").output() {
             Ok(output) => {
                 let output = std::str::from_utf8(&output.stderr).unwrap_or("");
                 if output.starts_with("error: could not find `Cargo.toml` in") {
@@ -680,7 +536,7 @@ async fn main() -> std::io::Result<()> {
                         if isdotfile
                             && var("DOTFILES").unwrap_or_else(|_| "false".to_string()) != "true"
                         {
-                            return dev::Response::new(http::StatusCode::FORBIDDEN).into_body();
+                            return Response::new(http::StatusCode::FORBIDDEN).into_body();
                         }
                         body
                     }))
@@ -689,15 +545,15 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::Compress::default())
             .wrap(middleware::Condition::new(
                 var("ENABLE_AUTH").unwrap_or_else(|_| "false".to_string()) == "true",
-                actix_web_httpauth::middleware::HttpAuthentication::basic(validator),
+                HttpAuthentication::basic(validator),
             ))
             .wrap(middleware::Logger::new("%t^%a^%s^%D^%r"));
-        let files = fs::Files::new("/", var("ROOT").unwrap_or_else(|_| ".".to_string()))
+        let files = actix_files::Files::new("/", var("ROOT").unwrap_or_else(|_| ".".to_string()))
             .use_hidden_files()
             .prefer_utf8(true)
             .show_files_listing()
             .files_listing_renderer(render_index)
-            .default_handler(|req: dev::ServiceRequest| {
+            .default_handler(|req: ServiceRequest| {
                 let (http_req, _payload) = req.into_parts();
                 async {
                     let path = var("ROOT").unwrap_or_else(|_| ".".to_string());
@@ -707,7 +563,7 @@ async fn main() -> std::io::Result<()> {
                         && path.is_file()
                         && var("SPA").unwrap_or_else(|_| "false".to_string()) == "true"
                     {
-                        let res = fs::NamedFile::open(path)?.into_response(&http_req);
+                        let res = actix_files::NamedFile::open(path)?.into_response(&http_req);
                         return Ok(ServiceResponse::new(http_req, res));
                     }
                     Ok(ServiceResponse::new(
@@ -720,10 +576,10 @@ async fn main() -> std::io::Result<()> {
     });
     let server = if enable_tls {
         let cert = &mut BufReader::new(
-            std::fs::File::open(Path::new(matches.value_of("cert").unwrap())).unwrap(),
+            fs::File::open(Path::new(matches.value_of("cert").unwrap())).unwrap(),
         );
         let key = &mut BufReader::new(
-            std::fs::File::open(Path::new(matches.value_of("key").unwrap())).unwrap(),
+            fs::File::open(Path::new(matches.value_of("key").unwrap())).unwrap(),
         );
         let cert = rustls_pemfile::certs(cert)
             .unwrap()
