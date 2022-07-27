@@ -22,7 +22,7 @@ use sha2::Digest;
 use std::{
     borrow::Cow,
     env::{set_var, var},
-    fs::{self, metadata, read_dir},
+    fs::{self, metadata, read_dir, read_to_string},
     io::{self, BufReader, Read, Write},
     net::IpAddr,
     path::{Path, PathBuf},
@@ -60,6 +60,7 @@ struct File {
 #[derive(Serialize)]
 struct IndexContext {
     title: String,
+    readme: String,
     paths: Vec<String>,
     dirs: Vec<Dir>,
     files: Vec<File>,
@@ -86,6 +87,7 @@ fn render_index(
     let show_dot_files = var("DOTFILES").unwrap_or_else(|_| "false".to_string()) == "true";
     let mut context = IndexContext {
         title: "".to_string(),
+        readme: "".to_string(),
         paths: vec![],
         dirs: vec![],
         files: vec![],
@@ -98,6 +100,7 @@ fn render_index(
         let path = path.into_owned();
         context.paths.push(path);
     }
+    let mut readme_str = "".to_string();
     match read_dir(&dir.path) {
         Err(e) => {
             error!(target: "read_dir", "[ERROR] Read dir error: {}", e.to_string());
@@ -150,9 +153,43 @@ fn render_index(
                         filetype,
                         modified,
                     });
+                    if path.file_name().to_ascii_lowercase() == "readme.md" {
+                        readme_str = read_to_string(path.path()).unwrap_or_else(|_| "".to_string());
+                    }
                 }
             }
         }
+    }
+    if var("NOINDEX").unwrap_or_else(|_| "false".to_string()) != "true" {
+        context.readme = comrak::markdown_to_html(
+            &readme_str,
+            &comrak::ComrakOptions {
+                extension: comrak::ComrakExtensionOptions {
+                    strikethrough: true,
+                    tagfilter: true,
+                    table: true,
+                    autolink: true,
+                    tasklist: true,
+                    superscript: true,
+                    header_ids: None,
+                    footnotes: true,
+                    description_lists: true,
+                    front_matter_delimiter: None,
+                },
+                parse: comrak::ComrakParseOptions {
+                    smart: false,
+                    default_info_string: None,
+                },
+                render: comrak::ComrakRenderOptions {
+                    hardbreaks: false,
+                    github_pre_lang: false,
+                    width: 1000,
+                    unsafe_: true,
+                    escape: false,
+                    list_style: comrak::ListStyleType::default(),
+                },
+            },
+        );
     }
     context.title = context.paths.last().unwrap_or(&"/".to_string()).to_string();
     context.dirs.sort();
@@ -239,6 +276,7 @@ async fn main() -> io::Result<()> {
     };
     let matches = clap::command!()
         .arg(Arg::new("noindex").long("noindex").help("Disable automatic index page generation"))
+        .arg(Arg::new("noreadme").long("noreadme").help("Disable automatic readme rendering"))
         .arg(Arg::new("nocache").long("nocache").help("Disable HTTP cache"))
         .arg(Arg::new("nocolor").long("nocolor").help("Disable cli colors"))
         .arg(Arg::new("cors").long("cors").takes_value(true).min_values(0).max_values(1).help("Enable CORS [with custom value]"))
@@ -270,6 +308,7 @@ async fn main() -> io::Result<()> {
     );
 
     set_var("NOINDEX", matches.is_present("noindex").to_string());
+    set_var("NOREADME", matches.is_present("noreadme").to_string());
     set_var("SPA", matches.is_present("spa").to_string());
     set_var("DOTFILES", matches.is_present("dotfiles").to_string());
     set_var("NOCACHE", matches.is_present("nocache").to_string());

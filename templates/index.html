@@ -1,6 +1,6 @@
 {# This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at https://mozilla.org/MPL/2.0/. #}
+# file, You can obtain one at https://mozilla.org/MPL/2.0/. -#}
 <!DOCTYPE html>
 <html lang="en">
 
@@ -145,7 +145,7 @@
       #meta,
       #listing {
         color: #cacaca;
-        background: #000000;
+        background: #0d1117;
       }
 
       #header nav span a {
@@ -154,7 +154,7 @@
 
       #header {
         padding: 1.5rem 5% 1rem;
-        background-color: #0e0e0e;
+        background-color: #161b22;
       }
 
       #listing table {
@@ -313,6 +313,26 @@
       <div style="text-align: center; margin: 1rem; color: #cccccc;">Nothing here</div>
       {% endif -%}
     </div>
+    {% if readme != "".to_string() -%}
+    <div id="readme">
+      {{ readme|safe }}
+    </div>
+    {% include "github-markdown.css.html" %}
+    <style>
+      #readme {
+        min-width: 200px;
+        max-width: 980px;
+        margin: 10px auto;
+        padding: 45px;
+      }
+
+      @media (max-width: 767px) {
+        #readme {
+          padding: 15px;
+        }
+      }
+    </style>
+    {% endif -%}
   </main>
   <script>
     (function () {
