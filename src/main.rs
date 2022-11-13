@@ -14,7 +14,7 @@ use actix_web_httpauth::{
     middleware::HttpAuthentication,
 };
 use askama_actix::TemplateToResponse;
-use clap::Arg;
+use clap::{arg, command, ArgAction};
 use env_logger::fmt::Color;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,7 @@ use std::{
     io::{self, BufReader, Read, Write},
     net::IpAddr,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     str::FromStr,
 };
 use time::OffsetDateTime;
@@ -160,7 +160,7 @@ fn render_index(
             }
         }
     }
-    if var("NOINDEX").unwrap_or_else(|_| "false".to_string()) != "true" {
+    if var("NOREADME").unwrap_or_else(|_| "false".to_string()) != "true" {
         context.readme = comrak::markdown_to_html(
             &readme_str,
             &comrak::ComrakOptions {
@@ -239,7 +239,7 @@ async fn main() -> io::Result<()> {
     let check_does_dir_exits = |path: &str| match metadata(path) {
         Ok(meta) => {
             if meta.is_dir() {
-                Ok(())
+                Ok(path.to_string())
             } else {
                 Err("Parameter is not a directory".to_owned())
             }
@@ -249,7 +249,7 @@ async fn main() -> io::Result<()> {
     let check_does_file_exits = |path: &str| match metadata(path) {
         Ok(metadata) => {
             if metadata.is_file() {
-                Ok(())
+                Ok(path.to_string())
             } else {
                 Err("Parameter is not a file".to_owned())
             }
@@ -257,11 +257,11 @@ async fn main() -> io::Result<()> {
         Err(e) => Err(e.to_string()),
     };
     let check_is_ip_addr = |s: &str| match IpAddr::from_str(s) {
-        Ok(_) => Ok(()),
+        Ok(_) => Ok(s.to_string()),
         Err(e) => Err(e.to_string()),
     };
     let check_is_port_num = |s: &str| match s.parse::<u16>() {
-        Ok(_) => Ok(()),
+        Ok(_) => Ok(s.to_string()),
         Err(e) => Err(e.to_string()),
     };
     let check_is_auth = |s: &str| {
@@ -271,83 +271,90 @@ async fn main() -> io::Result<()> {
         } else if parts[0].is_empty() {
             Err("Username not found".to_owned())
         } else {
-            Ok(())
+            Ok(s.to_string())
         }
     };
-    let matches = clap::command!()
-        .arg(Arg::new("noindex").long("noindex").help("Disable automatic index page generation"))
-        .arg(Arg::new("noreadme").long("noreadme").help("Disable automatic readme rendering"))
-        .arg(Arg::new("nocache").long("nocache").help("Disable HTTP cache"))
-        .arg(Arg::new("nocolor").long("nocolor").help("Disable cli colors"))
-        .arg(Arg::new("cors").long("cors").takes_value(true).min_values(0).max_values(1).help("Enable CORS [with custom value]"))
-        .arg(Arg::new("spa").long("spa").help("Enable Single-Page Application mode (always serve /index.html when the file is not found)"))
-        .arg(Arg::new("dotfiles").short('d').long("dotfiles").help("Show dotfiles"))
-        .arg(Arg::new("open").short('o').long("open").help("Open the page in the default browser"))
-        .arg(Arg::new("quiet").short('q').long("quiet").help("Disable access log output"))
-        .arg(Arg::new("quietall").long("quietall").help("Disable all output"))
-        .arg(Arg::new("ROOT").default_value(".").validator(check_does_dir_exits).help("Root directory"))
-        .arg(Arg::new("address").short('a').long("address").default_value("0.0.0.0").takes_value(true).validator(check_is_ip_addr).help("IP address to serve on"))
-        .arg(Arg::new("port").short('p').long("port").default_value("8000").takes_value(true).validator(check_is_port_num).help("Port to serve on"))
-        .arg(Arg::new("auth").long("auth").takes_value(true).validator(check_is_auth).help("HTTP Auth (username:password)"))
-        .arg(Arg::new("cert").long("cert").takes_value(true).validator(check_does_file_exits).help("Path of TLS/SSL public key (certificate)"))
-        .arg(Arg::new("key").long("key").takes_value(true).validator(check_does_file_exits).help("Path of TLS/SSL private key"))
+    let matches = command!()
+        .arg(arg!(--noindex "Disable automatic index page generation").required(false))
+        .arg(arg!(--noreadme "Disable automatic readme rendering").required(false))
+        .arg(arg!(--nocache "Disable HTTP cache").required(false))
+        .arg(arg!(--nocolor "Disable cli colors").required(false))
+        .arg(arg!(--cors [hostname] "Enable CORS [with custom value]").required(false).action(ArgAction::Append))
+        .arg(arg!(--spa "Enable Single-Page Application mode (always serve /index.html when the file is not found)").required(false))
+        .arg(arg!(-d --dotfiles "Show dotfiles").required(false))
+        .arg(arg!(-o --open "Open the page in the default browser").required(false))
+        .arg(arg!(-q --quiet "Disable access log output").required(false))
+        .arg(arg!(--quietall "Disable all output").required(false))
+        .arg(arg!([root] "Root directory").default_value(".").value_parser(check_does_dir_exits))
+        .arg(arg!(-a --address <ipaddr> "IP address to serve on").default_value("0.0.0.0").value_parser(check_is_ip_addr))
+        .arg(arg!(-p --port <port> "Port to serve on").default_value("8000").value_parser(check_is_port_num))
+        .arg(arg!(--auth <pattern> "HTTP Auth (username:password)").required(false).value_parser(check_is_auth))
+        .arg(arg!(--cert <path> "Path of TLS/SSL public key (certificate)").required(false).value_parser(check_does_file_exits))
+        .arg(arg!(--key <path> "Path of TLS/SSL private key").required(false).value_parser(check_does_file_exits))
         .subcommand(clap::Command::new("doc")
             .about("Open cargo doc via local server (Need cargo installation)")
-            .arg(Arg::new("nocolor").long("nocolor").help("Disable cli colors"))
-            .arg(Arg::new("noopen").long("noopen").help("Do not open the page in the default browser"))
-            .arg(Arg::new("log").long("log").help("Enable access log output [default: disabled]"))
-            .arg(Arg::new("quietall").long("quietall").help("Disable all output"))
-            .arg(Arg::new("address").short('a').long("address").default_value("0.0.0.0").takes_value(true).validator(check_is_ip_addr).help("IP address to serve on"))
-            .arg(Arg::new("port").short('p').long("port").default_value("8000").takes_value(true).validator(check_is_port_num).help("Port to serve on"))
+            .arg(arg!(--nocolor "Disable cli colors"))
+            .arg(arg!(--noopen "Do not open the page in the default browser"))
+            .arg(arg!(--log "Enable access log output [default: disabled]"))
+            .arg(arg!(--quietall "Disable all output"))
+            .arg(arg!(-a --address <ipaddr> "IP address to serve on").required(false).default_value("0.0.0.0").value_parser(check_is_ip_addr))
+            .arg(arg!(-p --port <port> "Port to serve on").required(false).default_value("8000").value_parser(check_is_port_num))
         )
         .get_matches();
 
     set_var(
         "ROOT",
-        display_path(Path::new(matches.value_of("ROOT").unwrap_or("."))),
+        display_path(Path::new(
+            matches
+                .get_one::<String>("root")
+                .unwrap_or(&".".to_string()),
+        )),
     );
 
-    set_var("NOINDEX", matches.is_present("noindex").to_string());
-    set_var("NOREADME", matches.is_present("noreadme").to_string());
-    set_var("SPA", matches.is_present("spa").to_string());
-    set_var("DOTFILES", matches.is_present("dotfiles").to_string());
-    set_var("NOCACHE", matches.is_present("nocache").to_string());
+    set_var("NOINDEX", matches.get_flag("noindex").to_string());
+    set_var("NOREADME", matches.get_flag("noreadme").to_string());
+    set_var("SPA", matches.get_flag("spa").to_string());
+    set_var("DOTFILES", matches.get_flag("dotfiles").to_string());
+    set_var("NOCACHE", matches.get_flag("nocache").to_string());
 
-    if matches.is_present("quiet") {
+    if matches.get_flag("quiet") {
         set_var("RUST_LOG", "info,actix_web::middleware::logger=off");
     }
-    if matches.is_present("quietall") {
+    if matches.get_flag("quietall") {
         set_var("RUST_LOG", "off");
     }
-    if matches.is_present("nocolor") {
+    if matches.get_flag("nocolor") {
         set_var("RUST_LOG_STYLE", "never");
     }
 
-    if let Some(s) = matches.value_of("auth") {
-        set_var("ENABLE_AUTH", matches.is_present("auth").to_string());
+    if let Some(s) = matches.get_one::<String>("auth") {
+        set_var("ENABLE_AUTH", matches.get_flag("auth").to_string());
         let parts = s.splitn(2, ':').collect::<Vec<&str>>();
         set_var("AUTH_USERNAME", parts[0]);
         set_var("AUTH_PASSWORD", hash(parts[1]));
     }
 
-    if matches.is_present("cors") {
-        set_var("ENABLE_CORS", matches.is_present("cors").to_string());
-        match matches.value_of("cors") {
-            Some(str) => {
-                set_var("CORS", str);
-            }
-            None => {
-                set_var("CORS", "*");
-            }
+    if let Some(mut cors) = matches.get_many::<String>("cors") {
+        set_var("ENABLE_CORS", "true");
+        match cors.next() {
+            Some(value) => set_var("CORS", value),
+            None => set_var("CORS", "*"),
         }
     }
 
-    let enable_tls = matches.is_present("cert") && matches.is_present("key");
+    let enable_tls =
+        matches.get_one::<String>("cert").is_some() && matches.get_one::<String>("key").is_some();
     let ip = matches
-        .value_of("address")
-        .unwrap_or("127.0.0.1")
+        .get_one::<String>("address")
+        .unwrap_or(&"127.0.0.1".to_string())
         .to_string();
-    let addr = format!("{}:{}", ip, matches.value_of("port").unwrap_or("8000"));
+    let addr = format!(
+        "{}:{}",
+        ip,
+        matches
+            .get_one::<String>("port")
+            .unwrap_or(&"8000".to_string())
+    );
     let url = format!(
         "{}{}:{}",
         if enable_tls {
@@ -356,7 +363,9 @@ async fn main() -> io::Result<()> {
             "http://".to_string()
         },
         if ip == "0.0.0.0" { "127.0.0.1" } else { &ip },
-        matches.value_of("port").unwrap_or("8000")
+        matches
+            .get_one::<String>("port")
+            .unwrap_or(&"8000".to_string())
     );
 
     let open_in_browser = |url: &str| {
@@ -375,18 +384,18 @@ async fn main() -> io::Result<()> {
         }
     };
 
-    if matches.is_present("open") {
+    if matches.get_flag("open") {
         open_in_browser(&url);
     }
 
     if let Some(matches) = matches.subcommand_matches("doc") {
-        if !matches.is_present("log") {
+        if !matches.get_flag("log") {
             set_var("RUST_LOG", "info,actix_web::middleware::logger=off");
         }
-        if matches.is_present("quietall") {
+        if matches.get_flag("quietall") {
             set_var("RUST_LOG", "off");
         }
-        if matches.is_present("nocolor") {
+        if matches.get_flag("nocolor") {
             set_var("RUST_LOG_STYLE", "never");
         }
     }
@@ -499,17 +508,19 @@ async fn main() -> io::Result<()> {
         };
         let crate_name = contents.package.name;
         info!("[INFO] Generating document (may take a while)");
-        match Command::new("cargo").arg("doc").output() {
-            Ok(output) => {
-                let output = std::str::from_utf8(&output.stderr).unwrap_or("");
-                if output.starts_with("error: could not find `Cargo.toml` in") {
-                    error!("[ERROR] Cargo.toml Not Found");
-                    return Ok(());
-                } else if output.starts_with("error: ") {
-                    error!(
-                        "[ERROR] {}",
-                        output.strip_prefix("error: ").unwrap_or(output)
-                    );
+        match Command::new("cargo")
+            .arg("doc")
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+        {
+            Ok(status) => {
+                if !status.success() {
+                    match status.code() {
+                        Some(code) => error!("[ERROR] Cargo exited with status code: {code}"),
+                        None => error!("[ERROR] Cargo terminated by signal"),
+                    }
                     return Ok(());
                 }
             }
@@ -527,17 +538,25 @@ async fn main() -> io::Result<()> {
         }
         set_var("ROOT", display_path(path));
         let ip = matches
-            .value_of("address")
-            .unwrap_or("127.0.0.1")
+            .get_one::<String>("address")
+            .unwrap_or(&"127.0.0.1".to_string())
             .to_string();
-        let addr = format!("{}:{}", ip, matches.value_of("port").unwrap_or("8000"));
+        let addr = format!(
+            "{}:{}",
+            ip,
+            matches
+                .get_one::<String>("port")
+                .unwrap_or(&"8000".to_string())
+        );
         let url = format!(
             "http://{}:{}/{}/index.html",
             if ip == "0.0.0.0" { "127.0.0.1" } else { &ip },
-            matches.value_of("port").unwrap_or("8000"),
+            matches
+                .get_one::<String>("port")
+                .unwrap_or(&"8000".to_string()),
             crate_name,
         );
-        if !matches.is_present("noopen") {
+        if !matches.get_flag("noopen") {
             open_in_browser(&url);
         }
         addr
@@ -615,10 +634,10 @@ async fn main() -> io::Result<()> {
     });
     let server = if enable_tls {
         let cert = &mut BufReader::new(
-            fs::File::open(Path::new(matches.value_of("cert").unwrap())).unwrap(),
+            fs::File::open(Path::new(matches.get_one::<String>("cert").unwrap())).unwrap(),
         );
         let key = &mut BufReader::new(
-            fs::File::open(Path::new(matches.value_of("key").unwrap())).unwrap(),
+            fs::File::open(Path::new(matches.get_one::<String>("key").unwrap())).unwrap(),
         );
         let cert = rustls_pemfile::certs(cert)
             .unwrap()
