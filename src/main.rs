@@ -179,6 +179,7 @@ fn render_index(
                 parse: comrak::ComrakParseOptions {
                     smart: false,
                     default_info_string: None,
+                    relaxed_tasklist_matching: true,
                 },
                 render: comrak::ComrakRenderOptions {
                     hardbreaks: false,
@@ -187,6 +188,8 @@ fn render_index(
                     unsafe_: true,
                     escape: false,
                     list_style: comrak::ListStyleType::default(),
+                    full_info_string: true,
+                    sourcepos: false,
                 },
             },
         );
